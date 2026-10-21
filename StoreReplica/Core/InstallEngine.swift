@@ -300,7 +300,8 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
             paths: [payload],
             zipFilePath: zipOutput,
             password: nil,
-            compression: .BestSpeed
+            compression: .BestSpeed,
+            progress: nil
         )
         try fm.moveItem(at: zipOutput, to: output)
         try? fm.removeItem(at: workingRoot)
