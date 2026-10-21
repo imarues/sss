@@ -19,6 +19,36 @@ private struct KiraPagesSource: Decodable {
     let apps: [KiraPagesApp]
 }
 
+private struct KiraPagesVersion: Decodable {
+    let version: String?
+    let date: String?
+    let size: Int64?
+    let downloadURL: String?
+    let downloadUrl: String?
+    let url: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case version, date, size, downloadURL, downloadUrl, url
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        version = try? c.decodeIfPresent(String.self, forKey: .version)
+        date = try? c.decodeIfPresent(String.self, forKey: .date)
+        downloadURL = try? c.decodeIfPresent(String.self, forKey: .downloadURL)
+        downloadUrl = try? c.decodeIfPresent(String.self, forKey: .downloadUrl)
+        url = try? c.decodeIfPresent(String.self, forKey: .url)
+
+        let numericSize = try? c.decode(Int64.self, forKey: .size)
+        let textSize = try? c.decode(String.self, forKey: .size)
+        size = numericSize ?? textSize.flatMap { Int64($0) }
+    }
+
+    var effectiveDownloadURL: String? {
+        [downloadURL, downloadUrl, url].compactMap { $0?.nilWhenBlank }.first
+    }
+}
+
 private struct KiraPagesApp: Decodable {
     let id: String?
     let name: String
@@ -32,9 +62,65 @@ private struct KiraPagesApp: Decodable {
     let size: Int64?
     let addedAt: String?
     let updatedAt: String?
+    let downloadURL: String?
+    let downloadUrl: String?
+    let url: String?
+    let versions: [KiraPagesVersion]?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, bundleIdentifier, bundleId, iconURL, localizedDescription, category
+        case version, versionDate, size, addedAt, updatedAt
+        case downloadURL, downloadUrl, url, versions
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try? c.decodeIfPresent(String.self, forKey: .id)
+        name = (try? c.decode(String.self, forKey: .name)) ?? "App"
+        bundleIdentifier = try? c.decodeIfPresent(String.self, forKey: .bundleIdentifier)
+        bundleId = try? c.decodeIfPresent(String.self, forKey: .bundleId)
+        iconURL = try? c.decodeIfPresent(String.self, forKey: .iconURL)
+        localizedDescription = try? c.decodeIfPresent(String.self, forKey: .localizedDescription)
+        category = try? c.decodeIfPresent(String.self, forKey: .category)
+        version = try? c.decodeIfPresent(String.self, forKey: .version)
+        versionDate = try? c.decodeIfPresent(String.self, forKey: .versionDate)
+        addedAt = try? c.decodeIfPresent(String.self, forKey: .addedAt)
+        updatedAt = try? c.decodeIfPresent(String.self, forKey: .updatedAt)
+        downloadURL = try? c.decodeIfPresent(String.self, forKey: .downloadURL)
+        downloadUrl = try? c.decodeIfPresent(String.self, forKey: .downloadUrl)
+        url = try? c.decodeIfPresent(String.self, forKey: .url)
+        versions = try? c.decodeIfPresent([KiraPagesVersion].self, forKey: .versions)
+
+        let numericSize = try? c.decode(Int64.self, forKey: .size)
+        let textSize = try? c.decode(String.self, forKey: .size)
+        size = numericSize ?? textSize.flatMap { Int64($0) }
+    }
+
+    private var currentVersionObject: KiraPagesVersion? {
+        guard let versions, !versions.isEmpty else { return nil }
+        if let exact = versions.first(where: { $0.version == version }) { return exact }
+        return versions.first
+    }
+
+    var effectiveVersion: String? {
+        version?.nilWhenBlank ?? currentVersionObject?.version?.nilWhenBlank
+    }
+
+    var effectiveVersionDate: String? {
+        versionDate?.nilWhenBlank ?? currentVersionObject?.date?.nilWhenBlank
+    }
+
+    var effectiveSize: Int64? {
+        size ?? currentVersionObject?.size
+    }
+
+    var effectiveDownloadURL: String? {
+        [downloadURL, downloadUrl, url].compactMap { $0?.nilWhenBlank }.first
+            ?? currentVersionObject?.effectiveDownloadURL
+    }
 
     var stableID: String {
-        id ?? bundleIdentifier ?? bundleId ?? "\(name)-\(version ?? "")"
+        id ?? bundleIdentifier ?? bundleId ?? "\(name)-\(effectiveVersion ?? "")"
     }
 
     func storeApp(kind: String, addedDay: String?, updatedDay: String?) -> StoreApp {
@@ -42,16 +128,24 @@ private struct KiraPagesApp: Decodable {
             id: stableID,
             name: name,
             bundleId: bundleIdentifier ?? bundleId,
-            version: version,
-            fileSize: size,
+            version: effectiveVersion,
+            fileSize: effectiveSize,
             notes: localizedDescription,
             iconUrl: iconURL,
             categories: category.map { [$0] },
             updatedAt: updatedDay,
             addedAt: addedDay,
-            versionUpdatedAt: KiraUpdatesClock.normalizedDay(versionDate),
-            feedKind: kind
+            versionUpdatedAt: KiraUpdatesClock.normalizedDay(effectiveVersionDate),
+            feedKind: kind,
+            downloadUrl: effectiveDownloadURL
         )
+    }
+}
+
+private extension String {
+    var nilWhenBlank: String? {
+        let value = trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
     }
 }
 
@@ -185,7 +279,7 @@ actor KiraPagesUpdatesService {
 
         for source in sourceApps {
             let addedDay = KiraUpdatesClock.normalizedDay(source.addedAt)
-            let updatedDay = KiraUpdatesClock.normalizedDay(source.updatedAt ?? source.versionDate)
+            let updatedDay = KiraUpdatesClock.normalizedDay(source.updatedAt ?? source.effectiveVersionDate)
 
             if let addedDay, validDays.contains(addedDay) {
                 newCounts[addedDay, default: 0] += 1
