@@ -23,16 +23,7 @@ private struct KiraPagesApp: Decodable {
         id ?? bundleIdentifier ?? bundleId ?? "\(name)-\(version ?? "")"
     }
 
-    var normalizedAddedDay: String? { UpdatesDateTools.normalizedDay(addedAt) }
-    var normalizedUpdatedDay: String? { UpdatesDateTools.normalizedDay(updatedAt ?? versionDate) }
-
-    func eventKind(on day: String) -> String? {
-        if normalizedAddedDay == day { return "new" }
-        if normalizedUpdatedDay == day { return "updated" }
-        return nil
-    }
-
-    func storeApp(on day: String) -> StoreApp {
+    func storeApp(kind: String, addedDay: String?, updatedDay: String?) -> StoreApp {
         StoreApp(
             id: stableID,
             name: name,
@@ -42,36 +33,11 @@ private struct KiraPagesApp: Decodable {
             notes: localizedDescription,
             iconUrl: iconURL,
             categories: category.map { [$0] },
-            updatedAt: normalizedUpdatedDay,
-            addedAt: normalizedAddedDay,
+            updatedAt: updatedDay,
+            addedAt: addedDay,
             versionUpdatedAt: UpdatesDateTools.normalizedDay(versionDate),
-            feedKind: eventKind(on: day)
+            feedKind: kind
         )
-    }
-}
-
-private actor KiraPagesUpdatesService {
-    static let shared = KiraPagesUpdatesService()
-    private let sourceURL = URL(string: "https://ikiraplus.pages.dev/IPA-AR.json")!
-    private var cachedApps: [KiraPagesApp]?
-
-    func fetch(force: Bool = false) async throws -> [KiraPagesApp] {
-        if !force, let cachedApps { return cachedApps }
-
-        var request = URLRequest(url: sourceURL)
-        request.cachePolicy = force ? .reloadIgnoringLocalCacheData : .returnCacheDataElseLoad
-        request.timeoutInterval = 35
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("ar-IQ,ar;q=0.9,en;q=0.7", forHTTPHeaderField: "Accept-Language")
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, 200..<300 ~= http.statusCode else {
-            throw StoreAPIError.invalidResponse
-        }
-
-        let decoded = try JSONDecoder().decode(KiraPagesSource.self, from: data)
-        cachedApps = decoded.apps
-        return decoded.apps
     }
 }
 
@@ -147,12 +113,77 @@ private struct LocalFeedDay: Identifiable {
     var total: Int { new + updated }
 }
 
+private struct KiraUpdatesSnapshot {
+    let days: [LocalFeedDay]
+    let appsByDay: [String: [StoreApp]]
+}
+
+private actor KiraPagesUpdatesService {
+    static let shared = KiraPagesUpdatesService()
+    private let sourceURL = URL(string: "https://ikiraplus.pages.dev/IPA-AR.json")!
+    private var cachedSnapshot: KiraUpdatesSnapshot?
+
+    func fetch(force: Bool = false) async throws -> KiraUpdatesSnapshot {
+        if !force, let cachedSnapshot { return cachedSnapshot }
+
+        var request = URLRequest(url: sourceURL)
+        request.cachePolicy = force ? .reloadIgnoringLocalCacheData : .returnCacheDataElseLoad
+        request.timeoutInterval = 35
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("ar-IQ,ar;q=0.9,en;q=0.7", forHTTPHeaderField: "Accept-Language")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, 200..<300 ~= http.statusCode else {
+            throw StoreAPIError.invalidResponse
+        }
+
+        let decoded = try JSONDecoder().decode(KiraPagesSource.self, from: data)
+        let snapshot = buildSnapshot(from: decoded.apps)
+        cachedSnapshot = snapshot
+        return snapshot
+    }
+
+    private func buildSnapshot(from sourceApps: [KiraPagesApp]) -> KiraUpdatesSnapshot {
+        let dayKeys = UpdatesDateTools.lastSevenDays().map(UpdatesDateTools.key)
+        let validDays = Set(dayKeys)
+
+        var newCounts = Dictionary(uniqueKeysWithValues: dayKeys.map { ($0, 0) })
+        var updatedCounts = Dictionary(uniqueKeysWithValues: dayKeys.map { ($0, 0) })
+        var buckets = Dictionary(uniqueKeysWithValues: dayKeys.map { ($0, [StoreApp]()) })
+
+        for source in sourceApps {
+            let addedDay = UpdatesDateTools.normalizedDay(source.addedAt)
+            let updatedDay = UpdatesDateTools.normalizedDay(source.updatedAt ?? source.versionDate)
+
+            if let addedDay, validDays.contains(addedDay) {
+                newCounts[addedDay, default: 0] += 1
+                buckets[addedDay, default: []].append(
+                    source.storeApp(kind: "new", addedDay: addedDay, updatedDay: updatedDay)
+                )
+            } else if let updatedDay, validDays.contains(updatedDay) {
+                updatedCounts[updatedDay, default: 0] += 1
+                buckets[updatedDay, default: []].append(
+                    source.storeApp(kind: "updated", addedDay: addedDay, updatedDay: updatedDay)
+                )
+            }
+        }
+
+        let days = dayKeys.map {
+            LocalFeedDay(date: $0, new: newCounts[$0] ?? 0, updated: updatedCounts[$0] ?? 0)
+        }
+        return KiraUpdatesSnapshot(days: days, appsByDay: buckets)
+    }
+}
+
 struct LiveUpdatesView: View {
     @State private var selectedDay = UpdatesDateTools.key(for: Date())
-    @State private var sourceApps: [KiraPagesApp] = []
+    @State private var days: [LocalFeedDay] = UpdatesDateTools.lastSevenDays().map {
+        LocalFeedDay(date: UpdatesDateTools.key(for: $0), new: 0, updated: 0)
+    }
+    @State private var appsByDay: [String: [StoreApp]] = [:]
+    @State private var visibleLimit = 35
     @State private var loading = false
     @State private var errorMessage: String?
-    @State private var lastRefresh: Date?
 
     private let service = KiraPagesUpdatesService.shared
 
@@ -166,7 +197,7 @@ struct LiveUpdatesView: View {
                     weekStrip
                     listHeader
                     appsList
-                    if let errorMessage, sourceApps.isEmpty {
+                    if let errorMessage, selectedAllApps.isEmpty {
                         errorView(errorMessage)
                     }
                     Color.clear.frame(height: 20)
@@ -178,6 +209,14 @@ struct LiveUpdatesView: View {
             .task { await loadSource(force: false) }
         }
         .navigationViewStyle(.stack)
+    }
+
+    private var selectedAllApps: [StoreApp] { appsByDay[selectedDay] ?? [] }
+    private var visibleApps: ArraySlice<StoreApp> { selectedAllApps.prefix(visibleLimit) }
+
+    private var selectedCounts: (new: Int, updated: Int) {
+        guard let day = days.first(where: { $0.date == selectedDay }) else { return (0, 0) }
+        return (day.new, day.updated)
     }
 
     private var titleBlock: some View {
@@ -240,9 +279,7 @@ struct LiveUpdatesView: View {
     private var weekStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 9) {
-                ForEach(displayWeek) { day in
-                    dayButton(day)
-                }
+                ForEach(days) { day in dayButton(day) }
             }
             .padding(.horizontal, StoreTheme.pageHorizontal)
         }
@@ -256,7 +293,8 @@ struct LiveUpdatesView: View {
 
         return Button {
             guard day.date != selectedDay else { return }
-            withAnimation(.easeInOut(duration: 0.2)) { selectedDay = day.date }
+            visibleLimit = 35
+            withAnimation(.easeInOut(duration: 0.18)) { selectedDay = day.date }
         } label: {
             VStack(spacing: 5) {
                 Text(shortWeekday(weekday))
@@ -291,7 +329,7 @@ struct LiveUpdatesView: View {
                 Text(UpdatesDateTools.relativeTitle(for: selectedDay))
                     .font(AppFont.black(18))
                     .foregroundStyle(StoreTheme.textPrimary)
-                Text("\(selectedApps.count) تطبيق")
+                Text("\(selectedAllApps.count) تطبيق")
                     .font(AppFont.regular(10.5))
                     .foregroundStyle(StoreTheme.textSecondary)
             }
@@ -301,27 +339,50 @@ struct LiveUpdatesView: View {
 
     @ViewBuilder
     private var appsList: some View {
-        if !selectedApps.isEmpty {
-            VStack(spacing: 0) {
-                ForEach(Array(selectedApps.enumerated()), id: \.element.id) { index, app in
+        if !selectedAllApps.isEmpty {
+            LazyVStack(spacing: 0) {
+                ForEach(Array(visibleApps.enumerated()), id: \.element.id) { index, app in
                     NavigationLink(destination: AppDetailView(app: app)) {
                         updateRow(app)
                     }
                     .buttonStyle(.plain)
 
-                    if index < selectedApps.count - 1 {
+                    if index < visibleApps.count - 1 {
                         Divider()
                             .overlay(StoreTheme.surfaceBorder.opacity(0.65))
                             .padding(.trailing, 74)
+                    }
+
+                    if index == visibleApps.count - 1 && visibleLimit < selectedAllApps.count {
+                        Color.clear
+                            .frame(height: 1)
+                            .onAppear {
+                                visibleLimit = min(visibleLimit + 35, selectedAllApps.count)
+                            }
                     }
                 }
             }
             .padding(.horizontal, 14)
             .storeCard(radius: 20)
             .padding(.horizontal, StoreTheme.pageHorizontal)
-        } else if !loading && errorMessage == nil {
+        } else if loading {
+            loadingCard
+        } else if errorMessage == nil {
             emptyView
         }
+    }
+
+    private var loadingCard: some View {
+        HStack(spacing: 12) {
+            ProgressView().tint(StoreTheme.accent)
+            Text("جاري قراءة IPA-AR.json…")
+                .font(AppFont.medium(12))
+                .foregroundStyle(StoreTheme.textSecondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(28)
+        .storeCard()
+        .padding(.horizontal, StoreTheme.pageHorizontal)
     }
 
     private func updateRow(_ app: StoreApp) -> some View {
@@ -413,31 +474,6 @@ struct LiveUpdatesView: View {
         .padding(.horizontal, StoreTheme.pageHorizontal)
     }
 
-    private var displayWeek: [LocalFeedDay] {
-        UpdatesDateTools.lastSevenDays().map { date in
-            let day = UpdatesDateTools.key(for: date)
-            let newCount = sourceApps.reduce(into: 0) { count, app in
-                if app.normalizedAddedDay == day { count += 1 }
-            }
-            let updatedCount = sourceApps.reduce(into: 0) { count, app in
-                if app.normalizedAddedDay != day && app.normalizedUpdatedDay == day { count += 1 }
-            }
-            return LocalFeedDay(date: day, new: newCount, updated: updatedCount)
-        }
-    }
-
-    private var selectedCounts: (new: Int, updated: Int) {
-        guard let day = displayWeek.first(where: { $0.date == selectedDay }) else { return (0, 0) }
-        return (day.new, day.updated)
-    }
-
-    private var selectedApps: [StoreApp] {
-        sourceApps.compactMap { app in
-            guard app.eventKind(on: selectedDay) != nil else { return nil }
-            return app.storeApp(on: selectedDay)
-        }
-    }
-
     private func loadSource(force: Bool) async {
         guard !loading else { return }
         loading = true
@@ -445,8 +481,10 @@ struct LiveUpdatesView: View {
         defer { loading = false }
 
         do {
-            sourceApps = try await service.fetch(force: force)
-            lastRefresh = Date()
+            let snapshot = try await service.fetch(force: force)
+            days = snapshot.days
+            appsByDay = snapshot.appsByDay
+            visibleLimit = 35
         } catch {
             errorMessage = error.localizedDescription
         }
