@@ -5,38 +5,68 @@ import ActivityKit
 final class InstallLiveActivityController {
     static let shared = InstallLiveActivityController()
 
+    private struct PendingUpdate {
+        let phase: InstallActivityAttributes.Phase
+        let progress: Double
+        let detail: String
+        let speed: String?
+    }
+
     private var activity: Activity<InstallActivityAttributes>?
     private var activeJobID: String?
     private var lastPush = Date.distantPast
-    private var startedAt = Date.distantPast
+    private var lastPublishedProgress: Double = 0
+    private var pendingUpdate: PendingUpdate?
+    private var flushTask: Task<Void, Never>?
+
+    /// Keep local ActivityKit updates responsive without flooding the system.
+    /// The newest skipped update is queued and flushed instead of being lost.
+    private let updateCadence: TimeInterval = 0.8
 
     func begin(job: StoreInstallJob) {
         Task { @MainActor in
-            if activeJobID != job.id {
-                if let old = activity {
-                    await old.end(using: nil, dismissalPolicy: .immediate)
-                }
-                let attributes = InstallActivityAttributes(
-                    appName: job.appName,
-                    bundleID: job.bundleID,
-                    iconURL: job.iconURL
-                )
-                let state = InstallActivityAttributes.ContentState(
-                    phase: .downloading,
-                    progress: 0,
-                    detail: "جاري التحميل",
-                    speed: nil
-                )
-                do {
-                    activity = try Activity.request(attributes: attributes, contentState: state, pushType: nil)
-                    activeJobID = job.id
-                    lastPush = Date()
-                    startedAt = Date()
-                } catch {
-                    activity = nil
-                    activeJobID = nil
-                }
-            }
+            await self.beginOnMain(job: job)
+        }
+    }
+
+    @MainActor
+    private func beginOnMain(job: StoreInstallJob) async {
+        if activeJobID == job.id, activity != nil {
+            return
+        }
+
+        flushTask?.cancel()
+        flushTask = nil
+        pendingUpdate = nil
+        lastPublishedProgress = 0
+
+        if let old = activity {
+            await old.end(using: nil, dismissalPolicy: .immediate)
+        }
+
+        let attributes = InstallActivityAttributes(
+            appName: job.appName,
+            bundleID: job.bundleID,
+            iconURL: job.iconURL
+        )
+        let state = InstallActivityAttributes.ContentState(
+            phase: .downloading,
+            progress: 0,
+            detail: "جاري التحميل",
+            speed: nil
+        )
+
+        do {
+            activity = try Activity.request(
+                attributes: attributes,
+                contentState: state,
+                pushType: nil
+            )
+            activeJobID = job.id
+            lastPush = Date()
+        } catch {
+            activity = nil
+            activeJobID = nil
         }
     }
 
@@ -48,45 +78,106 @@ final class InstallLiveActivityController {
         force: Bool
     ) {
         Task { @MainActor in
-            guard activeJobID == job.id, let activity else {
-                begin(job: job)
-                return
+            if self.activeJobID != job.id || self.activity == nil {
+                await self.beginOnMain(job: job)
             }
 
-            let age = Date().timeIntervalSince(startedAt)
-            let cadence: TimeInterval
-            switch age {
-            case 0..<120: cadence = 1.8
-            case 120..<600: cadence = 4.5
-            default: cadence = 12
-            }
-            guard force || Date().timeIntervalSince(lastPush) >= cadence else { return }
+            guard self.activeJobID == job.id, self.activity != nil else { return }
 
-            let state = InstallActivityAttributes.ContentState(
-                phase: InstallActivityAttributes.Phase(rawValue: phase.rawValue) ?? .downloading,
-                progress: progress,
+            let mappedPhase = InstallActivityAttributes.Phase(rawValue: phase.rawValue) ?? .downloading
+            let visibleProgress = self.visibleProgress(for: phase, rawProgress: progress)
+            let monotonicProgress = max(self.lastPublishedProgress, visibleProgress)
+
+            self.pendingUpdate = PendingUpdate(
+                phase: mappedPhase,
+                progress: monotonicProgress,
                 detail: detail,
                 speed: phase == .downloading ? detail : nil
             )
-            await activity.update(using: state)
-            lastPush = Date()
+
+            if force || Date().timeIntervalSince(self.lastPush) >= self.updateCadence {
+                await self.flushPendingUpdate()
+            } else {
+                self.schedulePendingFlush()
+            }
+        }
+    }
+
+    @MainActor
+    private func visibleProgress(for phase: StoreInstallPhase, rawProgress: Double) -> Double {
+        switch phase {
+        case .downloading:
+            // InstallEngine reserves the last 10% for signing/install.
+            // The in-app pill already converts 0...0.90 back to true download 0...100%.
+            // Do the same here so Dynamic Island always matches the app.
+            return max(0, min(1, rawProgress / 0.90))
+        case .signing, .installing, .complete:
+            return 1
+        case .idle, .failed:
+            return max(0, min(1, rawProgress))
+        }
+    }
+
+    @MainActor
+    private func schedulePendingFlush() {
+        guard flushTask == nil else { return }
+
+        let elapsed = Date().timeIntervalSince(lastPush)
+        let delay = max(0.05, updateCadence - elapsed)
+        let nanoseconds = UInt64(delay * 1_000_000_000)
+
+        flushTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: nanoseconds)
+            guard !Task.isCancelled, let self else { return }
+            self.flushTask = nil
+            await self.flushPendingUpdate()
+        }
+    }
+
+    @MainActor
+    private func flushPendingUpdate() async {
+        guard let activity, let update = pendingUpdate else { return }
+
+        pendingUpdate = nil
+        let state = InstallActivityAttributes.ContentState(
+            phase: update.phase,
+            progress: update.progress,
+            detail: update.detail,
+            speed: update.speed
+        )
+
+        await activity.update(using: state)
+        lastPublishedProgress = max(lastPublishedProgress, update.progress)
+        lastPush = Date()
+
+        // If a newer URLSession progress callback arrived while ActivityKit was updating,
+        // do not drop it. Queue one more flush at the normal cadence.
+        if pendingUpdate != nil {
+            schedulePendingFlush()
         }
     }
 
     func finish(job: StoreInstallJob, success: Bool, detail: String) {
         Task { @MainActor in
             guard activeJobID == job.id, let activity else { return }
+
+            flushTask?.cancel()
+            flushTask = nil
+            pendingUpdate = nil
+
             let state = InstallActivityAttributes.ContentState(
                 phase: success ? .complete : .failed,
-                progress: success ? 1 : 0,
+                progress: success ? 1 : lastPublishedProgress,
                 detail: detail,
                 speed: nil
             )
             await activity.update(using: state)
             try? await Task.sleep(nanoseconds: success ? 2_500_000_000 : 5_000_000_000)
             await activity.end(using: state, dismissalPolicy: .immediate)
+
             self.activity = nil
             self.activeJobID = nil
+            self.lastPublishedProgress = 0
         }
     }
 }
