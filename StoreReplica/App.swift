@@ -7,6 +7,7 @@ import CoreText
 struct TurathReplicaApp: App {
     @UIApplicationDelegateAdaptor(StoreInstallAppDelegate.self) private var installAppDelegate
     @StateObject private var store = StoreViewModel()
+    @ObservedObject private var signingSetup = SigningSetupCoordinator.shared
 
     init() {
         BatSignInstallURLBridge.install()
@@ -24,6 +25,16 @@ struct TurathReplicaApp: App {
                 .environmentObject(store)
                 .environment(\.layoutDirection, .rightToLeft)
                 .preferredColorScheme(.dark)
+                .fullScreenCover(
+                    isPresented: $signingSetup.isPresented,
+                    onDismiss: { signingSetup.cancel() }
+                ) {
+                    SigningSetupSheet {
+                        if let app = signingSetup.consumePendingApp() {
+                            StoreInstallCoordinator.shared.start(app)
+                        }
+                    }
+                }
                 .task {
                     StoreInstallCoordinator.shared.bootstrap()
                     await KiraPagesUpdatesService.shared.warm()
