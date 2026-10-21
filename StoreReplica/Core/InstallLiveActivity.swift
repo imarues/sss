@@ -84,7 +84,7 @@ final class InstallLiveActivityController {
 
             guard self.activeJobID == job.id, self.activity != nil else { return }
 
-            let mappedPhase = InstallActivityAttributes.Phase(rawValue: phase.rawValue) ?? .downloading
+            let mappedPhase = self.activityPhase(for: phase)
             let visibleProgress = self.visibleProgress(for: phase, rawProgress: progress)
             let monotonicProgress = max(self.lastPublishedProgress, visibleProgress)
 
@@ -104,6 +104,22 @@ final class InstallLiveActivityController {
     }
 
     @MainActor
+    private func activityPhase(for phase: StoreInstallPhase) -> InstallActivityAttributes.Phase {
+        switch phase {
+        case .idle, .downloading:
+            return .downloading
+        case .ready, .complete:
+            return .complete
+        case .signing:
+            return .signing
+        case .installing:
+            return .installing
+        case .failed:
+            return .failed
+        }
+    }
+
+    @MainActor
     private func visibleProgress(for phase: StoreInstallPhase, rawProgress: Double) -> Double {
         switch phase {
         case .downloading:
@@ -111,7 +127,7 @@ final class InstallLiveActivityController {
             // The in-app pill already converts 0...0.90 back to true download 0...100%.
             // Do the same here so Dynamic Island always matches the app.
             return max(0, min(1, rawProgress / 0.90))
-        case .signing, .installing, .complete:
+        case .ready, .signing, .installing, .complete:
             return 1
         case .idle, .failed:
             return max(0, min(1, rawProgress))
