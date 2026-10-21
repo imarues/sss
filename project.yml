@@ -11,12 +11,8 @@ settings:
     DEVELOPMENT_TEAM: ""
 
 packages:
-  ZSignApple:
-    url: https://github.com/zwsn/zsign-ios.git
-    revision: a7f275fb4830ea48adf536fcddee7d05471970d0
-  ZIPFoundation:
-    url: https://github.com/weichsel/ZIPFoundation.git
-    from: 0.9.19
+  BatSignZsign:
+    path: Vendor/BatSign/Zsign
   Zip:
     url: https://github.com/marmelroy/Zip.git
     exactVersion: 2.1.2
@@ -56,10 +52,8 @@ targets:
       - path: StoreReplica
       - path: Shared
     dependencies:
-      - package: ZSignApple
-        product: ZSignApple
-      - package: ZIPFoundation
-        product: ZIPFoundation
+      - package: BatSignZsign
+        product: ZsignSwift
       - package: Zip
         product: Zip
       - target: TurathLiveActivity
