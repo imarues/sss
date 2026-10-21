@@ -36,7 +36,6 @@ struct InstallPill: View {
     var action: () -> Void = {}
 
     @ObservedObject private var installer = StoreInstallCoordinator.shared
-    @State private var showSigningSetup = false
     @State private var installErrorMessage: String?
 
     private var installState: StoreInstallState {
@@ -73,7 +72,7 @@ struct InstallPill: View {
                 if SigningAssetProvider.hasCredentials {
                     installer.start(app)
                 } else {
-                    showSigningSetup = true
+                    SigningSetupCoordinator.shared.request(for: app)
                 }
             } else {
                 action()
@@ -103,14 +102,6 @@ struct InstallPill: View {
         .buttonStyle(.plain)
         .disabled(app != nil && [.downloading, .signing, .installing].contains(installState.phase))
         .opacity(app != nil && installState.phase == .failed ? 0.9 : 1)
-        .fullScreenCover(isPresented: $showSigningSetup) {
-            SigningSetupSheet {
-                showSigningSetup = false
-                if let app {
-                    installer.start(app)
-                }
-            }
-        }
         .onChange(of: installState) { newState in
             if let error = newState.errorMessage, !error.isEmpty {
                 installErrorMessage = error
@@ -134,7 +125,7 @@ struct InstallPill: View {
     }
 }
 
-private struct SigningSetupSheet: View {
+struct SigningSetupSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var p12URL: URL?
