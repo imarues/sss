@@ -3,6 +3,7 @@ import UIKit
 import Network
 import ActivityKit
 import ZIPFoundation
+import Zip
 import ZSign
 import Security
 
@@ -291,8 +292,17 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
         guard code == 0 else { throw StoreInstallError.signingFailed }
 
         let output = try signedFileURL(for: job)
+        let zipOutput = output.deletingPathExtension().appendingPathExtension("zip")
         try? fm.removeItem(at: output)
-        try fm.zipItem(at: workingRoot, to: output, shouldKeepParent: false)
+        try? fm.removeItem(at: zipOutput)
+
+        try Zip.zipFiles(
+            paths: [payload],
+            zipFilePath: zipOutput,
+            password: nil,
+            compression: .BestSpeed
+        )
+        try fm.moveItem(at: zipOutput, to: output)
         try? fm.removeItem(at: workingRoot)
         return output
     }
