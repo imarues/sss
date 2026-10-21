@@ -46,6 +46,7 @@ final class LoopbackIPAInstallServer {
         self.onFailure = onFailure
         self.onTransferStarted = onTransferStarted
         self.onTransferComplete = onTransferComplete
+
         listener.newConnectionHandler = { [weak self] connection in
             self?.handle(connection)
         }
@@ -55,7 +56,7 @@ final class LoopbackIPAInstallServer {
             case .ready:
                 DispatchQueue.main.async(execute: onReady)
             case .failed(let error):
-                self.report(error)
+                self.reportFatal(error)
             default:
                 break
             }
@@ -73,7 +74,7 @@ final class LoopbackIPAInstallServer {
         onTransferComplete = nil
     }
 
-    private func report(_ error: Error) {
+    private func reportFatal(_ error: Error) {
         guard !stopped else { return }
         DispatchQueue.main.async { [weak self] in
             self?.onFailure?(error)
@@ -107,8 +108,9 @@ final class LoopbackIPAInstallServer {
                 return
             }
 
-            if let error {
-                self.report(error)
+            // Client-side cancellation is normal for HEAD probes and range retries.
+            // It must not be promoted to a global installation failure.
+            if error != nil {
                 connection.cancel()
                 return
             }
@@ -140,29 +142,33 @@ final class LoopbackIPAInstallServer {
         }
 
         let method = String(parts[0]).uppercased()
-        let path = String(parts[1])
+        let rawPath = String(parts[1])
+        let path = rawPath.split(separator: "?", maxSplits: 1).first.map(String.init) ?? rawPath
+
         guard method == "GET" || method == "HEAD" else {
             sendText(connection, status: "405 Method Not Allowed", body: "Method Not Allowed")
             return
         }
-
-        if path.hasPrefix("/install") {
-            serveInstallBridge(connection, method: method, path: path)
-            return
-        }
-
-        guard path.hasPrefix("/app.ipa") else {
+        guard path == "/app.ipa" || path.hasPrefix("/app.ipa/") else {
             sendText(connection, status: "404 Not Found", body: "Not Found")
             return
         }
 
-        let size = (try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.size] as? NSNumber)?.int64Value ?? 0
+        let size = fileSize()
         guard size > 0 else {
             sendText(connection, status: "404 Not Found", body: "Missing IPA")
             return
         }
 
+        let hasRangeHeader = request.components(separatedBy: "\r\n")
+            .contains(where: { $0.lowercased().hasPrefix("range:") })
         let range = parseRange(request, size: size)
+
+        if hasRangeHeader && range == nil {
+            sendRangeNotSatisfiable(connection, size: size)
+            return
+        }
+
         let start = range?.0 ?? 0
         let end = range?.1 ?? (size - 1)
         let length = max(0, end - start + 1)
@@ -174,6 +180,7 @@ final class LoopbackIPAInstallServer {
         headers += "Accept-Ranges: bytes\r\n"
         headers += "Cache-Control: no-store\r\n"
         headers += "Content-Length: \(length)\r\n"
+        headers += "Content-Disposition: attachment; filename=\"app.ipa\"\r\n"
         if partial {
             headers += "Content-Range: bytes \(start)-\(end)/\(size)\r\n"
         }
@@ -193,8 +200,7 @@ final class LoopbackIPAInstallServer {
                 connection.cancel()
                 return
             }
-            if let error {
-                self.report(error)
+            guard error == nil else {
                 connection.cancel()
                 return
             }
@@ -206,84 +212,9 @@ final class LoopbackIPAInstallServer {
         })
     }
 
-    private func serveInstallBridge(_ connection: NWConnection, method: String, path: String) {
-        guard let components = URLComponents(string: "http://127.0.0.1\(path)"),
-              let token = components.queryItems?.first(where: { $0.name == "target" })?.value,
-              let installURL = decodeBase64URL(token),
-              installURL.hasPrefix("itms-services://") else {
-            sendText(connection, status: "400 Bad Request", body: "Missing install target")
-            return
-        }
-
-        let jsTarget = jsonStringLiteral(installURL)
-        let escapedLink = htmlEscaped(installURL)
-        let html = """
-        <!doctype html>
-        <html lang="ar" dir="rtl">
-        <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-          <title>تثبيت التطبيق</title>
-          <style>
-            body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#111;color:#fff;text-align:center;padding:52px 20px}
-            a{display:inline-block;margin-top:24px;padding:14px 28px;border-radius:14px;background:#0a84ff;color:white;text-decoration:none;font-weight:700}
-          </style>
-        </head>
-        <body>
-          <h3>جاري فتح مثبت iOS…</h3>
-          <p>إذا لم تظهر نافذة التثبيت اضغط الزر.</p>
-          <a href="\(escapedLink)">تثبيت الآن</a>
-          <script>
-            setTimeout(function(){ window.location.href = \(jsTarget); }, 120);
-          </script>
-        </body>
-        </html>
-        """
-        sendHTML(connection, method: method, body: html)
-    }
-
-    private func decodeBase64URL(_ value: String) -> String? {
-        var base64 = value
-            .replacingOccurrences(of: "-", with: "+")
-            .replacingOccurrences(of: "_", with: "/")
-        let remainder = base64.count % 4
-        if remainder != 0 {
-            base64 += String(repeating: "=", count: 4 - remainder)
-        }
-        guard let data = Data(base64Encoded: base64) else { return nil }
-        return String(data: data, encoding: .utf8)
-    }
-
-    private func jsonStringLiteral(_ value: String) -> String {
-        guard let data = try? JSONSerialization.data(withJSONObject: [value], options: []),
-              let array = String(data: data, encoding: .utf8),
-              array.count >= 2 else {
-            return "\"\""
-        }
-        return String(array.dropFirst().dropLast())
-    }
-
-    private func htmlEscaped(_ value: String) -> String {
-        value
-            .replacingOccurrences(of: "&", with: "&amp;")
-            .replacingOccurrences(of: "\"", with: "&quot;")
-            .replacingOccurrences(of: "<", with: "&lt;")
-            .replacingOccurrences(of: ">", with: "&gt;")
-    }
-
-    private func sendHTML(_ connection: NWConnection, method: String, body: String) {
-        let data = body.data(using: .utf8) ?? Data()
-        let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nContent-Length: \(data.count)\r\nConnection: close\r\n\r\n"
-        var packet = response.data(using: .utf8) ?? Data()
-        if method != "HEAD" {
-            packet.append(data)
-        }
-        connection.send(content: packet, completion: .contentProcessed { _ in connection.cancel() })
-    }
-
     private func stream(_ connection: NWConnection, start: UInt64, length: Int64, wholeFile: Bool) {
         guard let handle = try? FileHandle(forReadingFrom: fileURL) else {
-            report(NSError(
+            reportFatal(NSError(
                 domain: "TurathReplica.LoopbackInstaller",
                 code: 3,
                 userInfo: [NSLocalizedDescriptionKey: "تعذر قراءة ملف IPA الموقّع."]
@@ -291,6 +222,7 @@ final class LoopbackIPAInstallServer {
             connection.cancel()
             return
         }
+
         handle.seek(toFileOffset: start)
         var remaining = length
 
@@ -304,11 +236,11 @@ final class LoopbackIPAInstallServer {
                 return
             }
 
-            let amount = Int(min(Int64(512 * 1024), remaining))
+            let amount = Int(min(Int64(1024 * 1024), remaining))
             let data = handle.readData(ofLength: amount)
             guard !data.isEmpty else {
                 try? handle.close()
-                self.report(NSError(
+                self.reportFatal(NSError(
                     domain: "TurathReplica.LoopbackInstaller",
                     code: 4,
                     userInfo: [NSLocalizedDescriptionKey: "توقف إرسال ملف IPA قبل اكتماله."]
@@ -319,9 +251,10 @@ final class LoopbackIPAInstallServer {
 
             remaining -= Int64(data.count)
             connection.send(content: data, completion: .contentProcessed { error in
-                if let error {
+                if error != nil {
+                    // iOS can deliberately close one range request and retry another.
+                    // The next request is authoritative; do not fail the whole install.
                     try? handle.close()
-                    self.report(error)
                     connection.cancel()
                 } else {
                     pump()
@@ -331,17 +264,51 @@ final class LoopbackIPAInstallServer {
         pump()
     }
 
+    private func fileSize() -> Int64 {
+        let attrs = try? FileManager.default.attributesOfItem(atPath: fileURL.path)
+        return (attrs?[.size] as? NSNumber)?.int64Value ?? 0
+    }
+
     private func parseRange(_ request: String, size: Int64) -> (Int64, Int64)? {
-        guard let line = request.components(separatedBy: "\r\n")
-            .first(where: { $0.lowercased().hasPrefix("range:") }),
-              let token = line.split(separator: "=", maxSplits: 1).last else { return nil }
+        guard size > 0,
+              let line = request.components(separatedBy: "\r\n")
+                .first(where: { $0.lowercased().hasPrefix("range:") }),
+              let equals = line.firstIndex(of: "=") else {
+            return nil
+        }
+
+        let token = line[line.index(after: equals)...]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.contains(",") else { return nil }
 
         let bounds = token.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
-        guard let first = bounds.first, let start = Int64(first) else { return nil }
-        let requestedEnd = bounds.count > 1 ? Int64(bounds[1]) : nil
-        let end = min(requestedEnd ?? (size - 1), size - 1)
-        guard start >= 0, start <= end else { return nil }
+        guard bounds.count == 2 else { return nil }
+
+        let left = String(bounds[0]).trimmingCharacters(in: .whitespaces)
+        let right = String(bounds[1]).trimmingCharacters(in: .whitespaces)
+
+        if left.isEmpty {
+            guard let suffix = Int64(right), suffix > 0 else { return nil }
+            let count = min(suffix, size)
+            return (size - count, size - 1)
+        }
+
+        guard let start = Int64(left), start >= 0, start < size else { return nil }
+        let end: Int64
+        if right.isEmpty {
+            end = size - 1
+        } else {
+            guard let requestedEnd = Int64(right), requestedEnd >= start else { return nil }
+            end = min(requestedEnd, size - 1)
+        }
         return (start, end)
+    }
+
+    private func sendRangeNotSatisfiable(_ connection: NWConnection, size: Int64) {
+        let response = "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */\(size)\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        connection.send(content: response.data(using: .utf8), completion: .contentProcessed { _ in
+            connection.cancel()
+        })
     }
 
     private func sendText(_ connection: NWConnection, status: String, body: String) {
@@ -349,6 +316,8 @@ final class LoopbackIPAInstallServer {
         let response = "HTTP/1.1 \(status)\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: \(data.count)\r\nConnection: close\r\n\r\n"
         var packet = response.data(using: .utf8) ?? Data()
         packet.append(data)
-        connection.send(content: packet, completion: .contentProcessed { _ in connection.cancel() })
+        connection.send(content: packet, completion: .contentProcessed { _ in
+            connection.cancel()
+        })
     }
 }
