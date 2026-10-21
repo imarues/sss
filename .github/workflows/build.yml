@@ -3,7 +3,7 @@ name: Build IPA
 on:
   workflow_dispatch:
   push:
-    branches: [main, batsign-root-fix, download-engine-root-fix]
+    branches: [main, batsign-backend-port, batsign-root-fix, download-engine-root-fix]
 
 jobs:
   build:
@@ -12,6 +12,15 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Verify BatSign backend
+        run: |
+          test -f Vendor/BatSign/Zsign/Package.swift
+          test -f Vendor/BatSign/Feather/Utilities/Handlers/ZsignHandler.swift
+          echo "BatSign backend pinned at: $(git -C Vendor/BatSign rev-parse HEAD)"
 
       - name: Install XcodeGen
         run: brew install xcodegen
