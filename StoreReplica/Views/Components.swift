@@ -103,7 +103,7 @@ struct InstallPill: View {
         .buttonStyle(.plain)
         .disabled(app != nil && [.downloading, .signing, .installing].contains(installState.phase))
         .opacity(app != nil && installState.phase == .failed ? 0.9 : 1)
-        .sheet(isPresented: $showSigningSetup) {
+        .fullScreenCover(isPresented: $showSigningSetup) {
             SigningSetupSheet {
                 showSigningSetup = false
                 if let app {
@@ -175,10 +175,7 @@ private struct SigningSetupSheet: View {
                         pickingProvision = true
                     }
 
-                    SecureField("كلمة مرور P12", text: $password)
-                        .textContentType(.password)
-                        .submitLabel(.done)
-                        .multilineTextAlignment(.trailing)
+                    StablePasswordField(text: $password, placeholder: "كلمة مرور P12")
                         .padding(.horizontal, 14)
                         .frame(height: 50)
                         .background(StoreTheme.field)
@@ -225,6 +222,7 @@ private struct SigningSetupSheet: View {
             }
         }
         .preferredColorScheme(.dark)
+        .interactiveDismissDisabled(working)
         .sheet(isPresented: $pickingP12) {
             SigningFilePicker(allowedContentTypes: [.signingP12]) { urls in
                 pickingP12 = false
