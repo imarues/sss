@@ -50,6 +50,8 @@ targets:
     deploymentTarget: "16.1"
     sources:
       - path: StoreReplica
+        excludes:
+          - Core/InstallEngine.swift
       - path: Shared
     dependencies:
       - package: BatSignZsign
