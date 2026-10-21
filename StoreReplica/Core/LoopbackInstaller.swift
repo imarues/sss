@@ -6,8 +6,10 @@ final class LoopbackIPAInstallServer {
     private let queue = DispatchQueue(label: "com.ikiraplus.turath.installserver", qos: .userInitiated)
     private var listener: NWListener?
     private var onFailure: ((Error) -> Void)?
+    private var onTransferStarted: (() -> Void)?
     private var onTransferComplete: (() -> Void)?
     private var stopped = false
+    private var didReportTransferStart = false
 
     init(fileURL: URL) throws {
         self.fileURL = fileURL
@@ -28,6 +30,7 @@ final class LoopbackIPAInstallServer {
 
     func start(
         onReady: @escaping () -> Void,
+        onTransferStarted: @escaping () -> Void,
         onTransferComplete: @escaping () -> Void,
         onFailure: @escaping (Error) -> Void
     ) {
@@ -41,6 +44,7 @@ final class LoopbackIPAInstallServer {
         }
 
         self.onFailure = onFailure
+        self.onTransferStarted = onTransferStarted
         self.onTransferComplete = onTransferComplete
         listener.newConnectionHandler = { [weak self] connection in
             self?.handle(connection)
@@ -65,6 +69,7 @@ final class LoopbackIPAInstallServer {
         listener?.cancel()
         listener = nil
         onFailure = nil
+        onTransferStarted = nil
         onTransferComplete = nil
     }
 
@@ -72,6 +77,14 @@ final class LoopbackIPAInstallServer {
         guard !stopped else { return }
         DispatchQueue.main.async { [weak self] in
             self?.onFailure?(error)
+        }
+    }
+
+    private func reportTransferStarted() {
+        guard !stopped, !didReportTransferStart else { return }
+        didReportTransferStart = true
+        DispatchQueue.main.async { [weak self] in
+            self?.onTransferStarted?()
         }
     }
 
@@ -163,6 +176,10 @@ final class LoopbackIPAInstallServer {
         guard let headerData = headers.data(using: .utf8) else {
             connection.cancel()
             return
+        }
+
+        if method == "GET" {
+            reportTransferStarted()
         }
 
         connection.send(content: headerData, completion: .contentProcessed { [weak self] error in
