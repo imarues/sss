@@ -145,6 +145,12 @@ final class LoopbackIPAInstallServer {
             sendText(connection, status: "405 Method Not Allowed", body: "Method Not Allowed")
             return
         }
+
+        if path.hasPrefix("/install") {
+            serveInstallBridge(connection, method: method, path: path)
+            return
+        }
+
         guard path.hasPrefix("/app.ipa") else {
             sendText(connection, status: "404 Not Found", body: "Not Found")
             return
@@ -198,6 +204,81 @@ final class LoopbackIPAInstallServer {
             }
             self.stream(connection, start: UInt64(start), length: length, wholeFile: wholeFile)
         })
+    }
+
+    private func serveInstallBridge(_ connection: NWConnection, method: String, path: String) {
+        guard let components = URLComponents(string: "http://127.0.0.1\(path)"),
+              let token = components.queryItems?.first(where: { $0.name == "target" })?.value,
+              let installURL = decodeBase64URL(token),
+              installURL.hasPrefix("itms-services://") else {
+            sendText(connection, status: "400 Bad Request", body: "Missing install target")
+            return
+        }
+
+        let jsTarget = jsonStringLiteral(installURL)
+        let escapedLink = htmlEscaped(installURL)
+        let html = """
+        <!doctype html>
+        <html lang="ar" dir="rtl">
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+          <title>تثبيت التطبيق</title>
+          <style>
+            body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#111;color:#fff;text-align:center;padding:52px 20px}
+            a{display:inline-block;margin-top:24px;padding:14px 28px;border-radius:14px;background:#0a84ff;color:white;text-decoration:none;font-weight:700}
+          </style>
+        </head>
+        <body>
+          <h3>جاري فتح مثبت iOS…</h3>
+          <p>إذا لم تظهر نافذة التثبيت اضغط الزر.</p>
+          <a href="\(escapedLink)">تثبيت الآن</a>
+          <script>
+            setTimeout(function(){ window.location.href = \(jsTarget); }, 120);
+          </script>
+        </body>
+        </html>
+        """
+        sendHTML(connection, method: method, body: html)
+    }
+
+    private func decodeBase64URL(_ value: String) -> String? {
+        var base64 = value
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        let remainder = base64.count % 4
+        if remainder != 0 {
+            base64 += String(repeating: "=", count: 4 - remainder)
+        }
+        guard let data = Data(base64Encoded: base64) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private func jsonStringLiteral(_ value: String) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: [value], options: []),
+              let array = String(data: data, encoding: .utf8),
+              array.count >= 2 else {
+            return "\"\""
+        }
+        return String(array.dropFirst().dropLast())
+    }
+
+    private func htmlEscaped(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+    }
+
+    private func sendHTML(_ connection: NWConnection, method: String, body: String) {
+        let data = body.data(using: .utf8) ?? Data()
+        let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nContent-Length: \(data.count)\r\nConnection: close\r\n\r\n"
+        var packet = response.data(using: .utf8) ?? Data()
+        if method != "HEAD" {
+            packet.append(data)
+        }
+        connection.send(content: packet, completion: .contentProcessed { _ in connection.cancel() })
     }
 
     private func stream(_ connection: NWConnection, start: UInt64, length: Int64, wholeFile: Bool) {
