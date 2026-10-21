@@ -5,6 +5,7 @@ import CoreText
 
 @main
 struct TurathReplicaApp: App {
+    @UIApplicationDelegateAdaptor(StoreInstallAppDelegate.self) private var installAppDelegate
     @StateObject private var store = StoreViewModel()
 
     init() {
@@ -23,6 +24,7 @@ struct TurathReplicaApp: App {
                 .environment(\.layoutDirection, .rightToLeft)
                 .preferredColorScheme(.dark)
                 .task {
+                    StoreInstallCoordinator.shared.bootstrap()
                     await KiraPagesUpdatesService.shared.warm()
                 }
         }
