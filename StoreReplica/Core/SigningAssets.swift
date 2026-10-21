@@ -99,12 +99,48 @@ enum SigningAssetProvider {
         throw StoreInstallError.missingSigningAssets
     }
 
+    /// BatSign-style import: read both picker URLs while access is valid,
+    /// validate the pair and password first, then persist our own copies.
+    static func importCertificate(p12URL: URL, profileURL: URL, password: String) throws {
+        guard p12URL.pathExtension.lowercased() == "p12" else {
+            throw SigningAssetError.wrongP12Extension
+        }
+        guard profileURL.pathExtension.lowercased() == "mobileprovision" else {
+            throw SigningAssetError.wrongProvisionExtension
+        }
+
+        let p12Data = try readSecurityScopedData(from: p12URL)
+        let provisionData = try readSecurityScopedData(from: profileURL)
+        guard !p12Data.isEmpty else { throw SigningAssetError.emptyFile(p12URL.lastPathComponent) }
+        guard !provisionData.isEmpty else { throw SigningAssetError.emptyFile(profileURL.lastPathComponent) }
+
+        let identityCertificate = try identityCertificateData(p12Data: p12Data, password: password)
+        let provision = try provisionDictionary(data: provisionData)
+        try validate(identityCertificate: identityCertificate, provision: provision)
+
+        guard let p12Target = storedP12, let provisionTarget = storedProvision else {
+            throw StoreInstallError.missingSigningAssets
+        }
+
+        try p12Data.write(to: p12Target, options: [.atomic])
+        do {
+            try provisionData.write(to: provisionTarget, options: [.atomic])
+            try savePassword(password)
+        } catch {
+            try? FileManager.default.removeItem(at: p12Target)
+            try? FileManager.default.removeItem(at: provisionTarget)
+            throw error
+        }
+    }
+
     static func importP12(from source: URL) throws {
         guard source.pathExtension.lowercased() == "p12" else {
             throw SigningAssetError.wrongP12Extension
         }
         guard let target = storedP12 else { throw StoreInstallError.missingSigningAssets }
-        try copySecurityScoped(source, to: target, displayName: source.lastPathComponent)
+        let data = try readSecurityScopedData(from: source)
+        guard !data.isEmpty else { throw SigningAssetError.emptyFile(source.lastPathComponent) }
+        try data.write(to: target, options: [.atomic])
     }
 
     static func importProvision(from source: URL) throws {
@@ -112,8 +148,10 @@ enum SigningAssetProvider {
             throw SigningAssetError.wrongProvisionExtension
         }
         guard let target = storedProvision else { throw StoreInstallError.missingSigningAssets }
-        try copySecurityScoped(source, to: target, displayName: source.lastPathComponent)
-        _ = try provisionDictionary(at: target)
+        let data = try readSecurityScopedData(from: source)
+        guard !data.isEmpty else { throw SigningAssetError.emptyFile(source.lastPathComponent) }
+        _ = try provisionDictionary(data: data)
+        try data.write(to: target, options: [.atomic])
     }
 
     static func validateAndSavePassword(_ password: String) throws {
@@ -130,12 +168,14 @@ enum SigningAssetProvider {
     }
 
     static func validate(credentials: Credentials) throws {
-        let identityCertificate = try identityCertificateData(
-            p12URL: credentials.p12,
-            password: credentials.password
-        )
-        let provision = try provisionDictionary(at: credentials.mobileProvision)
+        let p12Data = try Data(contentsOf: credentials.p12)
+        let provisionData = try Data(contentsOf: credentials.mobileProvision)
+        let identityCertificate = try identityCertificateData(p12Data: p12Data, password: credentials.password)
+        let provision = try provisionDictionary(data: provisionData)
+        try validate(identityCertificate: identityCertificate, provision: provision)
+    }
 
+    private static func validate(identityCertificate: Data, provision: [String: Any]) throws {
         if let expiration = provision["ExpirationDate"] as? Date, expiration <= Date() {
             throw SigningAssetError.expiredProvision
         }
@@ -168,14 +208,13 @@ enum SigningAssetProvider {
         }
     }
 
-    private static func identityCertificateData(p12URL: URL, password: String) throws -> Data {
-        let data = try Data(contentsOf: p12URL)
-        guard !data.isEmpty else { throw SigningAssetError.emptyFile(p12URL.lastPathComponent) }
+    private static func identityCertificateData(p12Data: Data, password: String) throws -> Data {
+        guard !p12Data.isEmpty else { throw SigningAssetError.invalidP12 }
 
         var imported: CFArray?
         let options = [kSecImportExportPassphrase as String: password] as CFDictionary
-        let status = SecPKCS12Import(data as CFData, options, &imported)
-        if status == errSecAuthFailed {
+        let status = SecPKCS12Import(p12Data as CFData, options, &imported)
+        if status == errSecAuthFailed || status == errSecPkcs12VerifyFailure {
             throw SigningAssetError.badP12Password
         }
         guard status == errSecSuccess,
@@ -198,9 +237,8 @@ enum SigningAssetProvider {
         return SecCertificateCopyData(certificate) as Data
     }
 
-    private static func provisionDictionary(at url: URL) throws -> [String: Any] {
-        let data = try Data(contentsOf: url)
-        guard !data.isEmpty else { throw SigningAssetError.emptyFile(url.lastPathComponent) }
+    private static func provisionDictionary(data: Data) throws -> [String: Any] {
+        guard !data.isEmpty else { throw SigningAssetError.invalidProvision }
 
         let xmlStart = Data("<?xml".utf8)
         let xmlEnd = Data("</plist>".utf8)
@@ -235,24 +273,15 @@ enum SigningAssetProvider {
         return String(data: data, encoding: .utf8)
     }
 
-    private static func copySecurityScoped(_ source: URL, to target: URL, displayName: String) throws {
+    private static func readSecurityScopedData(from source: URL) throws -> Data {
         let granted = source.startAccessingSecurityScopedResource()
         defer {
             if granted { source.stopAccessingSecurityScopedResource() }
         }
-
-        let fm = FileManager.default
-        let attributes = try fm.attributesOfItem(atPath: source.path)
-        if let size = attributes[.size] as? NSNumber, size.int64Value <= 0 {
-            throw SigningAssetError.emptyFile(displayName)
+        do {
+            return try Data(contentsOf: source, options: [.mappedIfSafe])
+        } catch {
+            throw SigningAssetError.emptyFile(source.lastPathComponent)
         }
-
-        let temporary = target.deletingLastPathComponent()
-            .appendingPathComponent(".import-\(UUID().uuidString)")
-        defer { try? fm.removeItem(at: temporary) }
-
-        try fm.copyItem(at: source, to: temporary)
-        try? fm.removeItem(at: target)
-        try fm.moveItem(at: temporary, to: target)
     }
 }
