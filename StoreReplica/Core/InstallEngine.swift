@@ -8,7 +8,7 @@ import ZSign
 import Security
 
 enum StoreInstallPhase: String, Codable {
-    case idle, downloading, signing, installing, complete, failed
+    case idle, downloading, ready, signing, installing, complete, failed
 }
 
 struct StoreInstallState: Equatable {
@@ -16,6 +16,7 @@ struct StoreInstallState: Equatable {
     var progress: Double = 0
     var speedText: String?
     var message: String?
+    var errorMessage: String? = nil
 }
 
 struct StoreInstallJob: Codable {
@@ -38,6 +39,7 @@ enum StoreInstallError: LocalizedError {
     case manifestURL
     case httpStatus(Int)
     case installerRejected
+    case saveDownloadedFile
 
     var errorDescription: String? {
         switch self {
@@ -56,7 +58,9 @@ enum StoreInstallError: LocalizedError {
         case .httpStatus(let status):
             return "فشل تحميل التطبيق من الخادم (HTTP \(status))."
         case .installerRejected:
-            return "تعذر فتح مثبت iOS. أعد المحاولة وتأكد من السماح بفتح رابط التثبيت."
+            return "تعذر فتح مثبت iOS. يمكنك المحاولة مرة أخرى بدون إعادة تنزيل التطبيق."
+        case .saveDownloadedFile:
+            return "اكتمل التحميل لكن تعذر حفظ ملف IPA داخل تطبيق الملفات."
         }
     }
 }
@@ -71,7 +75,7 @@ final class StoreInstallAppDelegate: NSObject, UIApplicationDelegate {
     }
 
     func applicationDidBecomeActive(_ application: UIApplication) {
-        StoreInstallCoordinator.shared.retryPendingInstallHandOff()
+        StoreInstallCoordinator.shared.applicationDidBecomeActive()
     }
 }
 
@@ -87,6 +91,10 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
     private let signingQueue = DispatchQueue(label: "com.ikiraplus.turath.signing", qos: .userInitiated)
     private var installerServer: LoopbackIPAInstallServer?
     private var pendingInstallURL: URL?
+    private var pendingInstallJob: StoreInstallJob?
+    private var pendingSignedIPA: URL?
+    private var installTransferStarted = false
+    private var installPromptOpenedAt: Date?
     private var bootstrapped = false
 
     private lazy var session: URLSession = {
@@ -137,18 +145,83 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
         states[appID] ?? StoreInstallState()
     }
 
+    func state(for app: StoreApp) -> StoreInstallState {
+        if let current = states[app.id], current.phase != .idle {
+            return current
+        }
+        if let file = cachedIPAURL(for: app), FileManager.default.fileExists(atPath: file.path) {
+            return StoreInstallState(
+                phase: .ready,
+                progress: 1,
+                speedText: nil,
+                message: "محمّل ومحفوظ وجاهز للتثبيت"
+            )
+        }
+        return StoreInstallState()
+    }
+
     func start(_ app: StoreApp) {
         bootstrap()
 
-        guard let raw = app.effectiveDownloadURL?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !raw.isEmpty else {
+        if let current = states[app.id], [.downloading, .signing, .installing].contains(current.phase) {
+            return
+        }
+
+        let raw = app.effectiveDownloadURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let job = StoreInstallJob(
+            id: UUID().uuidString,
+            appID: app.id,
+            appName: app.name,
+            bundleID: app.bundleId ?? app.id,
+            version: app.version ?? "1.0",
+            iconURL: app.iconUrl,
+            downloadURL: raw,
+            expectedBytes: app.fileSize ?? 0
+        )
+
+        if let cached = try? cachedIPAURL(for: job), FileManager.default.fileExists(atPath: cached.path) {
+            guard SigningAssetProvider.hasCredentials else {
+                publish(
+                    appID: app.id,
+                    state: StoreInstallState(
+                        phase: .ready,
+                        progress: 1,
+                        speedText: nil,
+                        message: "محمّل وجاهز للتثبيت",
+                        errorMessage: StoreInstallError.missingSigningAssets.localizedDescription
+                    )
+                )
+                return
+            }
+
+            setJob(job)
+            publish(
+                appID: app.id,
+                state: StoreInstallState(phase: .signing, progress: 0.92, speedText: nil, message: "جاري التوقيع")
+            )
+            InstallLiveActivityBridge.begin(job: job)
+            InstallLiveActivityBridge.update(
+                job: job,
+                phase: .signing,
+                progress: 0.92,
+                detail: "جاري التوقيع",
+                force: true
+            )
+            signingQueue.async { [weak self] in
+                self?.signThenInstall(job: job, ipaURL: cached)
+            }
+            return
+        }
+
+        guard !raw.isEmpty else {
             publish(
                 appID: app.id,
                 state: StoreInstallState(
                     phase: .failed,
                     progress: 0,
                     speedText: nil,
-                    message: StoreInstallError.missingDownloadURL.localizedDescription
+                    message: StoreInstallError.missingDownloadURL.localizedDescription,
+                    errorMessage: StoreInstallError.missingDownloadURL.localizedDescription
                 )
             )
             return
@@ -163,13 +236,10 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
                     phase: .failed,
                     progress: 0,
                     speedText: nil,
-                    message: StoreInstallError.invalidDownloadURL.localizedDescription
+                    message: StoreInstallError.invalidDownloadURL.localizedDescription,
+                    errorMessage: StoreInstallError.invalidDownloadURL.localizedDescription
                 )
             )
-            return
-        }
-
-        if let current = states[app.id], [.downloading, .signing, .installing].contains(current.phase) {
             return
         }
 
@@ -180,22 +250,12 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
                     phase: .failed,
                     progress: 0,
                     speedText: nil,
-                    message: StoreInstallError.missingSigningAssets.localizedDescription
+                    message: StoreInstallError.missingSigningAssets.localizedDescription,
+                    errorMessage: StoreInstallError.missingSigningAssets.localizedDescription
                 )
             )
             return
         }
-
-        let job = StoreInstallJob(
-            id: UUID().uuidString,
-            appID: app.id,
-            appName: app.name,
-            bundleID: app.bundleId ?? app.id,
-            version: app.version ?? "1.0",
-            iconURL: app.iconUrl,
-            downloadURL: raw,
-            expectedBytes: app.fileSize ?? 0
-        )
 
         setJob(job)
         publish(
@@ -214,27 +274,99 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
         task.resume()
     }
 
-    func retryPendingInstallHandOff() {
-        guard UIApplication.shared.applicationState == .active,
-              let url = pendingInstallURL else { return }
-        UIApplication.shared.open(url, options: [:]) { [weak self] accepted in
-            if accepted {
-                self?.pendingInstallURL = nil
+    func applicationDidBecomeActive() {
+        if let url = pendingInstallURL, let job = pendingInstallJob {
+            pendingInstallURL = nil
+            openInstallLink(url, job: job)
+            return
+        }
+
+        guard let job = pendingInstallJob,
+              installPromptOpenedAt != nil,
+              !installTransferStarted else { return }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+            guard let self,
+                  self.pendingInstallJob?.id == job.id,
+                  !self.installTransferStarted else { return }
+            self.markInstallAttemptReady(job: job, detail: "تم إلغاء التثبيت. التطبيق ما زال محفوظًا وجاهزًا للمحاولة من جديد.")
+        }
+    }
+
+    private func openInstallLink(_ link: URL, job: StoreInstallJob) {
+        installPromptOpenedAt = Date()
+        UIApplication.shared.open(link, options: [:]) { [weak self] accepted in
+            guard let self else { return }
+            if !accepted {
+                self.fail(job: job, error: StoreInstallError.installerRejected)
+                return
+            }
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 60) { [weak self] in
+                guard let self,
+                      self.pendingInstallJob?.id == job.id,
+                      !self.installTransferStarted else { return }
+                self.markInstallAttemptReady(job: job, detail: "لم يبدأ مثبت iOS باستلام التطبيق. الملف محفوظ ويمكنك إعادة المحاولة.")
             }
         }
     }
 
-    private func downloadedFileURL(for job: StoreInstallJob) throws -> URL {
-        let root = try downloadsDirectory()
-        return root.appendingPathComponent(job.id + ".ipa")
+    private func cachedIPAURL(for app: StoreApp) -> URL? {
+        let job = StoreInstallJob(
+            id: "cache-check",
+            appID: app.id,
+            appName: app.name,
+            bundleID: app.bundleId ?? app.id,
+            version: app.version ?? "1.0",
+            iconURL: app.iconUrl,
+            downloadURL: app.effectiveDownloadURL ?? "",
+            expectedBytes: app.fileSize ?? 0
+        )
+        return try? cachedIPAURL(for: job)
     }
 
-    private func signedFileURL(for job: StoreInstallJob) throws -> URL {
-        let root = try downloadsDirectory()
-        return root.appendingPathComponent(job.id + "-signed.ipa")
+    private func cachedIPAURL(for job: StoreInstallJob) throws -> URL {
+        let fm = FileManager.default
+        let documents = try fm.url(
+            for: .documentDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        let appName = Self.safeFileComponent(job.appName, fallback: "App")
+        let version = Self.safeFileComponent(job.version, fallback: "1.0")
+        let folder = documents.appendingPathComponent(appName, isDirectory: true)
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder.appendingPathComponent("\(appName) - v\(version).ipa")
     }
 
-    private func downloadsDirectory() throws -> URL {
+    private static func safeFileComponent(_ value: String, fallback: String) -> String {
+        let forbidden = CharacterSet(charactersIn: "/\\:?%*|\"<>\n\r\t")
+        let cleaned = value
+            .components(separatedBy: forbidden)
+            .filter { !$0.isEmpty }
+            .joined(separator: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleaned.isEmpty || cleaned == "." || cleaned == ".." {
+            return fallback
+        }
+        return String(cleaned.prefix(100))
+    }
+
+    private func transientDirectory() throws -> URL {
+        let fm = FileManager.default
+        let base = try fm.url(
+            for: .cachesDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        let dir = base.appendingPathComponent("TurathSigning", isDirectory: true)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    private func internalDirectory() throws -> URL {
         let fm = FileManager.default
         let base = try fm.url(
             for: .applicationSupportDirectory,
@@ -242,29 +374,37 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
             appropriateFor: nil,
             create: true
         )
-        let dir = base.appendingPathComponent("TurathDownloads", isDirectory: true)
+        let dir = base.appendingPathComponent("TurathInternal", isDirectory: true)
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
+    }
+
+    private func signedFileURL(for job: StoreInstallJob) throws -> URL {
+        try transientDirectory().appendingPathComponent(job.id + "-signed.ipa")
     }
 
     private func handleFinishedDownload(tempURL: URL, jobID: String) {
         guard let job = job(jobID) else { return }
 
         do {
-            let target = try downloadedFileURL(for: job)
+            let target = try cachedIPAURL(for: job)
             let fm = FileManager.default
             try? fm.removeItem(at: target)
-            try fm.moveItem(at: tempURL, to: target)
+            do {
+                try fm.copyItem(at: tempURL, to: target)
+            } catch {
+                throw StoreInstallError.saveDownloadedFile
+            }
 
             publish(
                 appID: job.appID,
-                state: StoreInstallState(phase: .signing, progress: 0.92, speedText: nil, message: "جاري التوقيع")
+                state: StoreInstallState(phase: .signing, progress: 0.92, speedText: nil, message: "اكتمل التحميل · جاري التوقيع")
             )
             InstallLiveActivityBridge.update(
                 job: job,
                 phase: .signing,
                 progress: 0.92,
-                detail: "جاري التوقيع",
+                detail: "اكتمل التحميل · جاري التوقيع",
                 force: true
             )
 
@@ -288,7 +428,6 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
         }
 
         defer {
-            try? FileManager.default.removeItem(at: ipaURL)
             DispatchQueue.main.async {
                 if backgroundID != .invalid {
                     UIApplication.shared.endBackgroundTask(backgroundID)
@@ -387,6 +526,11 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
     private func startInstallServer(job: StoreInstallJob, signedIPA: URL) {
         installerServer?.stop()
         installerServer = nil
+        pendingInstallJob = job
+        pendingSignedIPA = signedIPA
+        pendingInstallURL = nil
+        installTransferStarted = false
+        installPromptOpenedAt = nil
 
         do {
             let server = try LoopbackIPAInstallServer(fileURL: signedIPA)
@@ -395,14 +539,29 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
                 onReady: { [weak self] in
                     guard let self else { return }
                     guard let link = Self.installURL(job: job) else {
-                        self.installerServer?.stop()
-                        self.installerServer = nil
-                        try? FileManager.default.removeItem(at: signedIPA)
                         self.fail(job: job, error: StoreInstallError.manifestURL)
                         return
                     }
 
-                    self.pendingInstallURL = link
+                    self.publish(
+                        appID: job.appID,
+                        state: StoreInstallState(
+                            phase: .installing,
+                            progress: 0.99,
+                            speedText: nil,
+                            message: "جاهز لفتح مثبت iOS"
+                        )
+                    )
+
+                    if UIApplication.shared.applicationState == .active {
+                        self.openInstallLink(link, job: job)
+                    } else {
+                        self.pendingInstallURL = link
+                    }
+                },
+                onTransferStarted: { [weak self] in
+                    guard let self, self.pendingInstallJob?.id == job.id else { return }
+                    self.installTransferStarted = true
                     self.publish(
                         appID: job.appID,
                         state: StoreInstallState(
@@ -412,52 +571,59 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
                             message: "جاري إرسال التطبيق إلى مثبت iOS"
                         )
                     )
-
-                    if UIApplication.shared.applicationState == .active {
-                        UIApplication.shared.open(link, options: [:]) { [weak self] accepted in
-                            guard let self else { return }
-                            if accepted {
-                                self.pendingInstallURL = nil
-                            } else {
-                                self.installerServer?.stop()
-                                self.installerServer = nil
-                                try? FileManager.default.removeItem(at: signedIPA)
-                                self.fail(job: job, error: StoreInstallError.installerRejected)
-                            }
-                        }
-                    }
                 },
                 onTransferComplete: { [weak self] in
                     guard let self else { return }
-                    self.pendingInstallURL = nil
                     self.publish(
                         appID: job.appID,
                         state: StoreInstallState(
-                            phase: .complete,
+                            phase: .ready,
                             progress: 1,
                             speedText: nil,
-                            message: "تم إرسال التطبيق إلى مثبت iOS"
+                            message: "محمّل ومحفوظ وجاهز لإعادة التثبيت"
                         )
                     )
                     InstallLiveActivityBridge.finish(job: job, success: true, detail: "تم إرسال التطبيق للتثبيت")
+                    self.cleanupInstallAttempt(deleteSigned: true)
                     self.removeJob(job.id)
-                    self.installerServer?.stop()
-                    self.installerServer = nil
-                    try? FileManager.default.removeItem(at: signedIPA)
                 },
                 onFailure: { [weak self] error in
                     guard let self else { return }
-                    self.pendingInstallURL = nil
-                    self.installerServer?.stop()
-                    self.installerServer = nil
-                    try? FileManager.default.removeItem(at: signedIPA)
                     self.fail(job: job, error: error)
                 }
             )
         } catch {
-            try? FileManager.default.removeItem(at: signedIPA)
             fail(job: job, error: error)
         }
+    }
+
+    private func markInstallAttemptReady(job: StoreInstallJob, detail: String) {
+        guard pendingInstallJob?.id == job.id else { return }
+        publish(
+            appID: job.appID,
+            state: StoreInstallState(
+                phase: .ready,
+                progress: 1,
+                speedText: nil,
+                message: detail
+            )
+        )
+        InstallLiveActivityBridge.finish(job: job, success: true, detail: "محفوظ وجاهز للتثبيت")
+        cleanupInstallAttempt(deleteSigned: true)
+        removeJob(job.id)
+    }
+
+    private func cleanupInstallAttempt(deleteSigned: Bool) {
+        installerServer?.stop()
+        installerServer = nil
+        if deleteSigned, let signed = pendingSignedIPA {
+            try? FileManager.default.removeItem(at: signed)
+        }
+        pendingInstallURL = nil
+        pendingInstallJob = nil
+        pendingSignedIPA = nil
+        installTransferStarted = false
+        installPromptOpenedAt = nil
     }
 
     private static func installURL(job: StoreInstallJob) -> URL? {
@@ -481,10 +647,35 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
 
     private func fail(job: StoreInstallJob, error: Error) {
         let text = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-        publish(
-            appID: job.appID,
-            state: StoreInstallState(phase: .failed, progress: 0, speedText: nil, message: text)
-        )
+        let cached = (try? cachedIPAURL(for: job)).map { FileManager.default.fileExists(atPath: $0.path) } ?? false
+
+        if pendingInstallJob?.id == job.id {
+            cleanupInstallAttempt(deleteSigned: true)
+        }
+
+        if cached {
+            publish(
+                appID: job.appID,
+                state: StoreInstallState(
+                    phase: .ready,
+                    progress: 1,
+                    speedText: nil,
+                    message: "التطبيق محفوظ وجاهز لإعادة المحاولة",
+                    errorMessage: text
+                )
+            )
+        } else {
+            publish(
+                appID: job.appID,
+                state: StoreInstallState(
+                    phase: .failed,
+                    progress: 0,
+                    speedText: nil,
+                    message: text,
+                    errorMessage: text
+                )
+            )
+        }
         InstallLiveActivityBridge.finish(job: job, success: false, detail: text)
         removeJob(job.id)
     }
@@ -496,7 +687,7 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
     }
 
     private var jobsFile: URL? {
-        guard let root = try? downloadsDirectory() else { return nil }
+        guard let root = try? internalDirectory() else { return nil }
         return root.appendingPathComponent("jobs.json")
     }
 
