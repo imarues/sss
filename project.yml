@@ -17,6 +17,9 @@ packages:
   ZIPFoundation:
     url: https://github.com/weichsel/ZIPFoundation.git
     from: 0.9.19
+  Zip:
+    url: https://github.com/marmelroy/Zip.git
+    exactVersion: 2.1.2
 
 targets:
   TurathLiveActivity:
@@ -53,6 +56,8 @@ targets:
         product: ZSignApple
       - package: ZIPFoundation
         product: ZIPFoundation
+      - package: Zip
+        product: Zip
       - target: TurathLiveActivity
         embed: true
     settings:
