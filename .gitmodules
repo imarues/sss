@@ -1,0 +1,3 @@
+[submodule "Vendor/BatSign"]
+	path = Vendor/BatSign
+	url = https://github.com/imarues/Sign.git
