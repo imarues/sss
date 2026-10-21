@@ -79,13 +79,8 @@ struct LiveUpdatesView: View {
         .navigationViewStyle(.stack)
     }
 
-    private var selectedAllApps: [StoreApp] {
-        appsByDay[selectedDay] ?? []
-    }
-
-    private var visibleApps: ArraySlice<StoreApp> {
-        selectedAllApps.prefix(visibleLimit)
-    }
+    private var selectedAllApps: [StoreApp] { appsByDay[selectedDay] ?? [] }
+    private var visibleApps: ArraySlice<StoreApp> { selectedAllApps.prefix(visibleLimit) }
 
     private var selectedCounts: (new: Int, updated: Int) {
         guard let day = days.first(where: { $0.date == selectedDay }) else { return (0, 0) }
@@ -156,9 +151,7 @@ struct LiveUpdatesView: View {
     private var weekStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 9) {
-                ForEach(days) { day in
-                    dayButton(day)
-                }
+                ForEach(days) { day in dayButton(day) }
             }
             .padding(.horizontal, StoreTheme.pageHorizontal)
         }
@@ -172,9 +165,7 @@ struct LiveUpdatesView: View {
         return Button {
             guard day.date != selectedDay else { return }
             visibleLimit = 35
-            withAnimation(.easeInOut(duration: 0.16)) {
-                selectedDay = day.date
-            }
+            withAnimation(.easeInOut(duration: 0.16)) { selectedDay = day.date }
         } label: {
             VStack(spacing: 5) {
                 Text(shortWeekday(weekday))
@@ -222,10 +213,15 @@ struct LiveUpdatesView: View {
         if !selectedAllApps.isEmpty {
             LazyVStack(spacing: 0) {
                 ForEach(Array(visibleApps.enumerated()), id: \.element.id) { index, app in
-                    NavigationLink(destination: AppDetailView(app: app)) {
-                        updateRow(app)
+                    HStack(spacing: 8) {
+                        NavigationLink(destination: AppDetailView(app: app)) {
+                            updateRowContent(app)
+                        }
+                        .buttonStyle(.plain)
+
+                        InstallPill(app: app)
                     }
-                    .buttonStyle(.plain)
+                    .padding(.vertical, 10)
 
                     if index < visibleApps.count - 1 {
                         Divider()
@@ -265,7 +261,7 @@ struct LiveUpdatesView: View {
         .padding(.horizontal, StoreTheme.pageHorizontal)
     }
 
-    private func updateRow(_ app: StoreApp) -> some View {
+    private func updateRowContent(_ app: StoreApp) -> some View {
         HStack(spacing: 12) {
             AppIconView(app: app, size: 62)
             VStack(alignment: .trailing, spacing: 5) {
@@ -290,9 +286,8 @@ struct LiveUpdatesView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
-            InstallPill()
         }
-        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity)
     }
 
     private func feedBadge(for app: StoreApp) -> some View {
@@ -362,9 +357,7 @@ struct LiveUpdatesView: View {
             loadingInitial = false
         }
 
-        if !hadCache {
-            loadingInitial = true
-        }
+        if !hadCache { loadingInitial = true }
         await refresh(force: false)
         loadingInitial = false
     }
