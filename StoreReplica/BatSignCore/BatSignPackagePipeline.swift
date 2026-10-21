@@ -40,6 +40,16 @@ enum BatSignPackagePipeline {
         credentials: SigningAssetProvider.Credentials,
         outputURL: URL
     ) throws -> BatSignPackageArtifact {
+        // A package that was already sealed with this exact P12 + provision and
+        // app version does not need Zsign or another archive pass. Materialize a
+        // disposable hard-link and hand it straight to the localhost installer.
+        if let cached = BatSignSignedCache.materializeForInstall(
+            job: job,
+            credentials: credentials
+        ) {
+            return cached
+        }
+
         let root = fm.temporaryDirectory
             .appendingPathComponent("BatSignCore-\(job.id)-\(UUID().uuidString)", isDirectory: true)
         try? fm.removeItem(at: root)
@@ -76,9 +86,6 @@ enum BatSignPackagePipeline {
         try? fm.removeItem(at: outputURL)
 
         do {
-            // BatSign's install path can use stored/no-compression packaging.
-            // Signing already consumed the CPU-heavy work; do not spend more
-            // time recompressing assets that are commonly compressed already.
             try Zip.zipFiles(
                 paths: [payload],
                 zipFilePath: zipURL,
@@ -93,17 +100,23 @@ enum BatSignPackagePipeline {
             throw BatSignPackageError.archiveFailed
         }
 
-        return BatSignPackageArtifact(
+        let artifact = BatSignPackageArtifact(
             ipaURL: outputURL,
             name: metadata.name,
             bundleID: metadata.bundleID,
             version: metadata.version
         )
+
+        // Best effort. A cache failure must never turn a successful signature
+        // into a failed installation.
+        try? BatSignSignedCache.store(
+            artifact: artifact,
+            job: job,
+            credentials: credentials
+        )
+        return artifact
     }
 
-    /// BatSign imports packages through a work directory and follows Payload,
-    /// rather than assuming that unzip always places it at one exact URL. A
-    /// few stores wrap an IPA in one extra folder, so support that layout too.
     static func locatePayload(in root: URL) -> URL? {
         let direct = root.appendingPathComponent("Payload", isDirectory: true)
         var isDirectory: ObjCBool = false
