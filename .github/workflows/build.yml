@@ -15,20 +15,14 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Materialize BatSign Zsign snapshot
+      - name: Verify vendored BatSign Zsign
         run: |
           set -euo pipefail
-          mkdir -p Vendor
-          cat Vendor/ZsignSnapshot/Zsign.part*.b64 | base64 --decode > /tmp/Zsign-snapshot.zip
-          ACTUAL="$(shasum -a 256 /tmp/Zsign-snapshot.zip | awk '{print $1}')"
-          EXPECTED="626e60acb0fa985c4d496bed3659403779465bb775cac2d8a8681114ed3d4296"
-          test "$ACTUAL" = "$EXPECTED"
-          rm -rf Vendor/Zsign
-          unzip -q /tmp/Zsign-snapshot.zip -d Vendor
           test -f Vendor/Zsign/Package.swift
           test -f Vendor/Zsign/Sources/zsign.swift
           test -f Vendor/Zsign/src/zsign.cpp
-          echo "BatSign Zsign snapshot verified: $ACTUAL"
+          test -f Vendor/Zsign/src/zsign.mm
+          echo "Using local BatSign Zsign source from Vendor/Zsign"
 
       - name: Install XcodeGen
         run: brew install xcodegen
