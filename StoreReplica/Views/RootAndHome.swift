@@ -80,7 +80,7 @@ struct MainStoreShell: View {
                 switch selected {
                 case .home: HomeView()
                 case .explore: ExploreView()
-                case .updates: UpdatesView()
+                case .updates: LiveUpdatesView()
                 case .shop: ShopView()
                 case .search: SearchView()
                 }
