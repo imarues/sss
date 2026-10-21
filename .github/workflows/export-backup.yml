@@ -1,0 +1,29 @@
+name: Export Backup ZIP
+
+on:
+  push:
+    branches:
+      - export-backup-2026-10-21
+  workflow_dispatch:
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pristine backup
+        uses: actions/checkout@v4
+        with:
+          ref: backup-excellent-2026-10-21
+          fetch-depth: 1
+
+      - name: Create source ZIP
+        run: |
+          zip -r sss-backup-excellent-2026-10-21.zip . -x '.git/*' 'sss-backup-excellent-2026-10-21.zip'
+
+      - name: Upload source ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: sss-backup-excellent-2026-10-21
+          path: sss-backup-excellent-2026-10-21.zip
+          if-no-files-found: error
+          compression-level: 0
