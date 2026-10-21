@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 import Foundation
 import CoreText
+
 struct StoreConfigResponse: Codable {
     var slug: String? = nil
     var storeName: String? = nil
@@ -25,6 +26,7 @@ struct DesignSpec: Codable {
     var install: StyleSpec? = nil
     var badges: StyleSpec? = nil
 }
+
 struct DesignColors: Codable {
     var accent: String? = nil; var onAccent: String? = nil; var background: String? = nil; var surface: String? = nil
     var surfaceBorder: String? = nil; var sheet: String? = nil; var field: String? = nil; var textPrimary: String? = nil
@@ -32,9 +34,11 @@ struct DesignColors: Codable {
     var badgeNewBg: String? = nil; var badgeNewText: String? = nil; var badgeUpdatedBg: String? = nil
     var badgeUpdatedText: String? = nil; var tabBarBg: String? = nil; var tabActive: String? = nil; var tabInactive: String? = nil
 }
+
 struct ShapeSpec: Codable { var radius: String? = nil; var card: String? = nil }
 struct TypeSpec: Codable { var font: String? = nil; var scale: String? = nil }
 struct StyleSpec: Codable { var style: String? = nil }
+
 struct SplashSpec: Codable {
     var enabled: Bool? = nil; var title: String? = nil; var subtitle: String? = nil; var bgColor: String? = nil
     var inkColor: String? = nil; var accentColor: String? = nil; var seconds: Double? = nil; var imageUrl: String? = nil
@@ -92,6 +96,17 @@ struct StoreApp: Codable, Identifiable, Hashable {
     var addedAt: String? = nil
     var versionUpdatedAt: String? = nil
     var feedKind: String? = nil
+    var downloadUrl: String? = nil
+    var downloadURL: String? = nil
+
+    var effectiveDownloadURL: String? {
+        let candidates = [downloadUrl, downloadURL]
+        return candidates.compactMap { value in
+            guard let value else { return nil }
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }.first
+    }
 }
 
 struct StoreCategory: Codable, Identifiable, Hashable {
@@ -132,6 +147,7 @@ struct FeedResponse: Codable {
     var hasMore: Bool? = nil
     var apps: [StoreApp] = []
 }
+
 struct FeedCounts: Codable { var new: Int? = nil; var updated: Int? = nil }
 struct FeedDay: Codable, Identifiable { var date: String; var new: Int? = nil; var updated: Int? = nil; var id: String { date } }
 
@@ -144,6 +160,7 @@ struct CatalogResponse: Codable {
     var pages: Int? = nil
     var apps: [StoreApp]? = nil
 }
+
 struct SubscriptionInfo: Codable {
     var planName: String? = nil
     var expiresAt: String? = nil
@@ -164,8 +181,21 @@ struct CardsResponse: Codable {
     var categories: [CardCategory]? = nil
     var products: [CardProduct]? = nil
 }
-struct CardStoreInfo: Codable { var slug: String? = nil; var storeName: String? = nil; var logoUrl: String? = nil; var theme: String? = nil; var themeColor: String? = nil }
-struct CardCategory: Codable, Identifiable { var id: String; var name: String; var imageUrl: String? = nil }
+
+struct CardStoreInfo: Codable {
+    var slug: String? = nil
+    var storeName: String? = nil
+    var logoUrl: String? = nil
+    var theme: String? = nil
+    var themeColor: String? = nil
+}
+
+struct CardCategory: Codable, Identifiable {
+    var id: String
+    var name: String
+    var imageUrl: String? = nil
+}
+
 struct CardProduct: Codable, Identifiable {
     var id: String
     var name: String
