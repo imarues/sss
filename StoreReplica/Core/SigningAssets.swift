@@ -181,7 +181,12 @@ enum SigningAssetProvider {
         guard status == errSecSuccess,
               let items = imported as? [[String: Any]],
               let first = items.first,
-              let identity = first[kSecImportItemIdentity as String] as? SecIdentity else {
+              let identityValue = first[kSecImportItemIdentity as String] else {
+            throw SigningAssetError.invalidP12
+        }
+
+        let identity = identityValue as! SecIdentity
+        guard CFGetTypeID(identity) == SecIdentityGetTypeID() else {
             throw SigningAssetError.invalidP12
         }
 
