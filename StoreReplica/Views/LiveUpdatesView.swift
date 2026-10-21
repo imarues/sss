@@ -1,97 +1,34 @@
 import SwiftUI
 import Foundation
 
-private struct KiraPagesSource: Decodable {
-    let apps: [KiraPagesApp]
-}
-
-private struct KiraPagesApp: Decodable {
-    let id: String?
-    let name: String
-    let bundleIdentifier: String?
-    let bundleId: String?
-    let iconURL: String?
-    let localizedDescription: String?
-    let category: String?
-    let version: String?
-    let versionDate: String?
-    let size: Int64?
-    let addedAt: String?
-    let updatedAt: String?
-
-    var stableID: String {
-        id ?? bundleIdentifier ?? bundleId ?? "\(name)-\(version ?? "")"
-    }
-
-    func storeApp(kind: String, addedDay: String?, updatedDay: String?) -> StoreApp {
-        StoreApp(
-            id: stableID,
-            name: name,
-            bundleId: bundleIdentifier ?? bundleId,
-            version: version,
-            fileSize: size,
-            notes: localizedDescription,
-            iconUrl: iconURL,
-            categories: category.map { [$0] },
-            updatedAt: updatedDay,
-            addedAt: addedDay,
-            versionUpdatedAt: UpdatesDateTools.normalizedDay(versionDate),
-            feedKind: kind
-        )
-    }
-}
-
-private enum UpdatesDateTools {
+private enum UpdatesViewDateTools {
     static var calendar: Calendar = {
         var value = Calendar(identifier: .gregorian)
         value.timeZone = TimeZone(identifier: "Asia/Baghdad") ?? .current
         return value
     }()
 
-    static let keyFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.calendar = calendar
-        f.timeZone = calendar.timeZone
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.dateFormat = "yyyy-MM-dd"
-        return f
-    }()
-
-    static let weekdayFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.calendar = calendar
-        f.timeZone = calendar.timeZone
-        f.locale = Locale(identifier: "ar_IQ")
-        f.dateFormat = "EEEE"
-        return f
-    }()
-
-    static let monthDayFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.calendar = calendar
-        f.timeZone = calendar.timeZone
-        f.locale = Locale(identifier: "ar_IQ")
-        f.dateFormat = "d MMM"
-        return f
-    }()
-
-    static func key(for date: Date) -> String { keyFormatter.string(from: date) }
-    static func date(from key: String) -> Date? { keyFormatter.date(from: key) }
-
-    static func normalizedDay(_ raw: String?) -> String? {
-        guard let raw else { return nil }
-        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty else { return nil }
-        if value.count >= 10 {
-            let firstTen = String(value.prefix(10))
-            if keyFormatter.date(from: firstTen) != nil { return firstTen }
-        }
-        return keyFormatter.date(from: value).map { keyFormatter.string(from: $0) }
+    static func formatter(_ format: String, locale: String) -> DateFormatter {
+        let value = DateFormatter()
+        value.calendar = calendar
+        value.timeZone = calendar.timeZone
+        value.locale = Locale(identifier: locale)
+        value.dateFormat = format
+        return value
     }
 
-    static func lastSevenDays() -> [Date] {
-        let today = calendar.startOfDay(for: Date())
-        return (0..<7).compactMap { calendar.date(byAdding: .day, value: -$0, to: today) }
+    static func date(from key: String) -> Date? {
+        formatter("yyyy-MM-dd", locale: "en_US_POSIX").date(from: key)
+    }
+
+    static func weekday(for key: String) -> String {
+        guard let date = date(from: key) else { return "—" }
+        return formatter("EEEE", locale: "ar_IQ").string(from: date)
+    }
+
+    static func dayNumber(for key: String) -> Int {
+        guard let date = date(from: key) else { return 0 }
+        return calendar.component(.day, from: date)
     }
 
     static func relativeTitle(for key: String) -> String {
@@ -101,88 +38,19 @@ private enum UpdatesDateTools {
         let delta = calendar.dateComponents([.day], from: selected, to: today).day ?? 0
         if delta == 0 { return "اليوم" }
         if delta == 1 { return "أمس" }
-        return monthDayFormatter.string(from: date)
-    }
-}
-
-private struct LocalFeedDay: Identifiable {
-    let date: String
-    let new: Int
-    let updated: Int
-    var id: String { date }
-    var total: Int { new + updated }
-}
-
-private struct KiraUpdatesSnapshot {
-    let days: [LocalFeedDay]
-    let appsByDay: [String: [StoreApp]]
-}
-
-private actor KiraPagesUpdatesService {
-    static let shared = KiraPagesUpdatesService()
-    private let sourceURL = URL(string: "https://ikiraplus.pages.dev/IPA-AR.json")!
-    private var cachedSnapshot: KiraUpdatesSnapshot?
-
-    func fetch(force: Bool = false) async throws -> KiraUpdatesSnapshot {
-        if !force, let cachedSnapshot { return cachedSnapshot }
-
-        var request = URLRequest(url: sourceURL)
-        request.cachePolicy = force ? .reloadIgnoringLocalCacheData : .returnCacheDataElseLoad
-        request.timeoutInterval = 35
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("ar-IQ,ar;q=0.9,en;q=0.7", forHTTPHeaderField: "Accept-Language")
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, 200..<300 ~= http.statusCode else {
-            throw StoreAPIError.invalidResponse
-        }
-
-        let decoded = try JSONDecoder().decode(KiraPagesSource.self, from: data)
-        let snapshot = buildSnapshot(from: decoded.apps)
-        cachedSnapshot = snapshot
-        return snapshot
-    }
-
-    private func buildSnapshot(from sourceApps: [KiraPagesApp]) -> KiraUpdatesSnapshot {
-        let dayKeys = UpdatesDateTools.lastSevenDays().map(UpdatesDateTools.key)
-        let validDays = Set(dayKeys)
-
-        var newCounts = Dictionary(uniqueKeysWithValues: dayKeys.map { ($0, 0) })
-        var updatedCounts = Dictionary(uniqueKeysWithValues: dayKeys.map { ($0, 0) })
-        var buckets = Dictionary(uniqueKeysWithValues: dayKeys.map { ($0, [StoreApp]()) })
-
-        for source in sourceApps {
-            let addedDay = UpdatesDateTools.normalizedDay(source.addedAt)
-            let updatedDay = UpdatesDateTools.normalizedDay(source.updatedAt ?? source.versionDate)
-
-            if let addedDay, validDays.contains(addedDay) {
-                newCounts[addedDay, default: 0] += 1
-                buckets[addedDay, default: []].append(
-                    source.storeApp(kind: "new", addedDay: addedDay, updatedDay: updatedDay)
-                )
-            } else if let updatedDay, validDays.contains(updatedDay) {
-                updatedCounts[updatedDay, default: 0] += 1
-                buckets[updatedDay, default: []].append(
-                    source.storeApp(kind: "updated", addedDay: addedDay, updatedDay: updatedDay)
-                )
-            }
-        }
-
-        let days = dayKeys.map {
-            LocalFeedDay(date: $0, new: newCounts[$0] ?? 0, updated: updatedCounts[$0] ?? 0)
-        }
-        return KiraUpdatesSnapshot(days: days, appsByDay: buckets)
+        return formatter("d MMM", locale: "ar_IQ").string(from: date)
     }
 }
 
 struct LiveUpdatesView: View {
-    @State private var selectedDay = UpdatesDateTools.key(for: Date())
-    @State private var days: [LocalFeedDay] = UpdatesDateTools.lastSevenDays().map {
-        LocalFeedDay(date: UpdatesDateTools.key(for: $0), new: 0, updated: 0)
+    @State private var selectedDay = KiraUpdatesClock.lastSevenDayKeys().first ?? ""
+    @State private var days: [KiraUpdatesDay] = KiraUpdatesClock.lastSevenDayKeys().map {
+        KiraUpdatesDay(date: $0, new: 0, updated: 0)
     }
     @State private var appsByDay: [String: [StoreApp]] = [:]
     @State private var visibleLimit = 35
-    @State private var loading = false
+    @State private var loadingInitial = true
+    @State private var refreshing = false
     @State private var errorMessage: String?
 
     private let service = KiraPagesUpdatesService.shared
@@ -197,7 +65,7 @@ struct LiveUpdatesView: View {
                     weekStrip
                     listHeader
                     appsList
-                    if let errorMessage, selectedAllApps.isEmpty {
+                    if let errorMessage, selectedAllApps.isEmpty, !loadingInitial {
                         errorView(errorMessage)
                     }
                     Color.clear.frame(height: 20)
@@ -205,14 +73,19 @@ struct LiveUpdatesView: View {
             }
             .background(StoreTheme.background)
             .navigationBarHidden(true)
-            .refreshable { await loadSource(force: true) }
-            .task { await loadSource(force: false) }
+            .refreshable { await refresh(force: true) }
+            .task { await bootstrap() }
         }
         .navigationViewStyle(.stack)
     }
 
-    private var selectedAllApps: [StoreApp] { appsByDay[selectedDay] ?? [] }
-    private var visibleApps: ArraySlice<StoreApp> { selectedAllApps.prefix(visibleLimit) }
+    private var selectedAllApps: [StoreApp] {
+        appsByDay[selectedDay] ?? []
+    }
+
+    private var visibleApps: ArraySlice<StoreApp> {
+        selectedAllApps.prefix(visibleLimit)
+    }
 
     private var selectedCounts: (new: Int, updated: Int) {
         guard let day = days.first(where: { $0.date == selectedDay }) else { return (0, 0) }
@@ -232,9 +105,13 @@ struct LiveUpdatesView: View {
             Spacer()
             ZStack {
                 Circle().fill(StoreTheme.accent.opacity(0.12))
-                Image(systemName: "arrow.triangle.2.circlepath")
-                    .font(.system(size: 23, weight: .bold))
-                    .foregroundStyle(StoreTheme.accent)
+                if refreshing {
+                    ProgressView().tint(StoreTheme.accent)
+                } else {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 23, weight: .bold))
+                        .foregroundStyle(StoreTheme.accent)
+                }
             }
             .frame(width: 52, height: 52)
         }
@@ -279,29 +156,32 @@ struct LiveUpdatesView: View {
     private var weekStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 9) {
-                ForEach(days) { day in dayButton(day) }
+                ForEach(days) { day in
+                    dayButton(day)
+                }
             }
             .padding(.horizontal, StoreTheme.pageHorizontal)
         }
     }
 
-    private func dayButton(_ day: LocalFeedDay) -> some View {
+    private func dayButton(_ day: KiraUpdatesDay) -> some View {
         let selected = day.date == selectedDay
-        let date = UpdatesDateTools.date(from: day.date)
-        let weekday = date.map { UpdatesDateTools.weekdayFormatter.string(from: $0) } ?? "—"
-        let dayNumber = date.map { UpdatesDateTools.calendar.component(.day, from: $0) } ?? 0
+        let weekday = UpdatesViewDateTools.weekday(for: day.date)
+        let number = UpdatesViewDateTools.dayNumber(for: day.date)
 
         return Button {
             guard day.date != selectedDay else { return }
             visibleLimit = 35
-            withAnimation(.easeInOut(duration: 0.18)) { selectedDay = day.date }
+            withAnimation(.easeInOut(duration: 0.16)) {
+                selectedDay = day.date
+            }
         } label: {
             VStack(spacing: 5) {
                 Text(shortWeekday(weekday))
                     .font(AppFont.medium(10.5))
                     .foregroundStyle(selected ? StoreTheme.onAccent : StoreTheme.textSecondary)
                     .lineLimit(1)
-                Text("\(dayNumber)")
+                Text("\(number)")
                     .font(AppFont.black(18))
                     .foregroundStyle(selected ? StoreTheme.onAccent : StoreTheme.textPrimary)
                 Text("\(day.total)")
@@ -321,12 +201,12 @@ struct LiveUpdatesView: View {
 
     private var listHeader: some View {
         HStack {
-            if loading {
+            if loadingInitial {
                 ProgressView().tint(StoreTheme.accent).scaleEffect(0.85)
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 3) {
-                Text(UpdatesDateTools.relativeTitle(for: selectedDay))
+                Text(UpdatesViewDateTools.relativeTitle(for: selectedDay))
                     .font(AppFont.black(18))
                     .foregroundStyle(StoreTheme.textPrimary)
                 Text("\(selectedAllApps.count) تطبيق")
@@ -365,7 +245,7 @@ struct LiveUpdatesView: View {
             .padding(.horizontal, 14)
             .storeCard(radius: 20)
             .padding(.horizontal, StoreTheme.pageHorizontal)
-        } else if loading {
+        } else if loadingInitial {
             loadingCard
         } else if errorMessage == nil {
             emptyView
@@ -375,7 +255,7 @@ struct LiveUpdatesView: View {
     private var loadingCard: some View {
         HStack(spacing: 12) {
             ProgressView().tint(StoreTheme.accent)
-            Text("جاري قراءة IPA-AR.json…")
+            Text("جاري تجهيز التحديثات…")
                 .font(AppFont.medium(12))
                 .foregroundStyle(StoreTheme.textSecondary)
         }
@@ -450,7 +330,7 @@ struct LiveUpdatesView: View {
             Image(systemName: "wifi.exclamationmark")
                 .font(.system(size: 30, weight: .semibold))
                 .foregroundStyle(StoreTheme.badgeUpdated)
-            Text("تعذر تحميل IPA-AR.json")
+            Text("تعذر تحديث IPA-AR.json")
                 .font(AppFont.bold(14))
                 .foregroundStyle(StoreTheme.textPrimary)
             Text(message)
@@ -459,7 +339,7 @@ struct LiveUpdatesView: View {
                 .multilineTextAlignment(.center)
                 .lineLimit(3)
             Button("إعادة المحاولة") {
-                Task { await loadSource(force: true) }
+                Task { await refresh(force: true) }
             }
             .font(AppFont.bold(12))
             .foregroundStyle(StoreTheme.onAccent)
@@ -474,20 +354,44 @@ struct LiveUpdatesView: View {
         .padding(.horizontal, StoreTheme.pageHorizontal)
     }
 
-    private func loadSource(force: Bool) async {
-        guard !loading else { return }
-        loading = true
-        errorMessage = nil
-        defer { loading = false }
+    private func bootstrap() async {
+        var hadCache = false
+        if let cached = await service.cached() {
+            apply(cached)
+            hadCache = true
+            loadingInitial = false
+        }
+
+        if !hadCache {
+            loadingInitial = true
+        }
+        await refresh(force: false)
+        loadingInitial = false
+    }
+
+    private func refresh(force: Bool) async {
+        guard !refreshing else { return }
+        refreshing = true
+        defer { refreshing = false }
 
         do {
-            let snapshot = try await service.fetch(force: force)
-            days = snapshot.days
-            appsByDay = snapshot.appsByDay
-            visibleLimit = 35
+            let fresh = try await service.refreshIfNeeded(force: force)
+            apply(fresh)
+            errorMessage = nil
         } catch {
-            errorMessage = error.localizedDescription
+            if appsByDay.values.allSatisfy({ $0.isEmpty }) {
+                errorMessage = error.localizedDescription
+            }
         }
+    }
+
+    private func apply(_ snapshot: KiraUpdatesSnapshot) {
+        days = snapshot.days
+        appsByDay = snapshot.appsByDay
+        if !days.contains(where: { $0.date == selectedDay }) {
+            selectedDay = days.first?.date ?? selectedDay
+        }
+        visibleLimit = 35
     }
 
     private func shortWeekday(_ value: String) -> String {
