@@ -12,7 +12,7 @@ settings:
 
 packages:
   BatSignZsign:
-    path: Vendor/BatSign/Zsign
+    path: Vendor/Zsign
   Zip:
     url: https://github.com/marmelroy/Zip.git
     exactVersion: 2.1.2
