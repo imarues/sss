@@ -8,6 +8,8 @@ final class BatSignLoopbackIPAInstallServer {
     private var listener: NWListener?
     private var stopped = false
     private var reportedStart = false
+    private var reportedComplete = false
+    private var deliveredRanges: [(Int64, Int64)] = []
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
 
     private var onTransferStarted: (() -> Void)?
@@ -44,7 +46,6 @@ final class BatSignLoopbackIPAInstallServer {
         self.onTransferStarted = onTransferStarted
         self.onTransferComplete = onTransferComplete
         self.onFailure = onFailure
-
         beginInstallKeepAlive()
 
         listener.newConnectionHandler = { [weak self] connection in
@@ -72,6 +73,7 @@ final class BatSignLoopbackIPAInstallServer {
         onFailure = nil
         onTransferStarted = nil
         onTransferComplete = nil
+        deliveredRanges.removeAll()
         endInstallKeepAlive()
     }
 
@@ -172,9 +174,6 @@ final class BatSignLoopbackIPAInstallServer {
             return
         }
 
-        // <script> is a raw-text HTML element. HTML-escaping '&' to '&amp;' here
-        // corrupts the itms-services query instead of protecting it. Escape the
-        // JavaScript string and the fallback anchor independently.
         let jsTarget = target
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
@@ -236,27 +235,24 @@ final class BatSignLoopbackIPAInstallServer {
             guard let self else { connection.cancel(); return }
             guard error == nil else { connection.cancel(); return }
             if method == "HEAD" { connection.cancel(); return }
-            self.stream(connection, offset: UInt64(start), remaining: length,
-                        reportComplete: start == 0 && end == size - 1)
+            self.stream(connection, start: start, end: end, totalSize: size)
         })
     }
 
-    private func stream(_ connection: NWConnection, offset: UInt64, remaining: Int64, reportComplete: Bool) {
+    private func stream(_ connection: NWConnection, start: Int64, end: Int64, totalSize: Int64) {
         guard let handle = try? FileHandle(forReadingFrom: fileURL) else {
             reportFailure(NSError(domain: "Turath.BatSignServer", code: 3,
                                   userInfo: [NSLocalizedDescriptionKey: "تعذر قراءة IPA الموقّع."]))
             connection.cancel()
             return
         }
-        handle.seek(toFileOffset: offset)
-        var left = remaining
+        handle.seek(toFileOffset: UInt64(start))
+        var left = end - start + 1
         func pump() {
             guard left > 0 else {
                 try? handle.close()
                 connection.cancel()
-                if reportComplete {
-                    DispatchQueue.main.async { [weak self] in self?.onTransferComplete?() }
-                }
+                self.recordDeliveredRange(start: start, end: end, totalSize: totalSize)
                 return
             }
             let count = Int(min(left, 1024 * 1024))
@@ -274,6 +270,35 @@ final class BatSignLoopbackIPAInstallServer {
             })
         }
         pump()
+    }
+
+    /// MobileInstallation can fetch one full file or several HTTP byte ranges.
+    /// Track completed ranges and only report success once their union covers the
+    /// whole signed IPA. A cancelled/retried range is never counted.
+    private func recordDeliveredRange(start: Int64, end: Int64, totalSize: Int64) {
+        guard !reportedComplete, start >= 0, end >= start, totalSize > 0 else { return }
+        deliveredRanges.append((start, end))
+        deliveredRanges.sort { $0.0 < $1.0 }
+
+        var merged: [(Int64, Int64)] = []
+        for range in deliveredRanges {
+            if let last = merged.last, range.0 <= last.1 + 1 {
+                merged[merged.count - 1] = (last.0, max(last.1, range.1))
+            } else {
+                merged.append(range)
+            }
+        }
+        deliveredRanges = merged
+
+        guard merged.count == 1,
+              let only = merged.first,
+              only.0 == 0,
+              only.1 >= totalSize - 1 else { return }
+
+        reportedComplete = true
+        DispatchQueue.main.async { [weak self] in
+            self?.onTransferComplete?()
+        }
     }
 
     private func parseRange(_ request: String, size: Int64) -> (Int64, Int64)? {
