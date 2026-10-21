@@ -10,7 +10,6 @@ struct TurathReplicaApp: App {
     @ObservedObject private var signingSetup = SigningSetupCoordinator.shared
 
     init() {
-        BatSignInstallURLBridge.install()
         FontLoader.registerBundledPingAR()
         UINavigationBar.appearance().largeTitleTextAttributes = [.foregroundColor: UIColor.white]
         UINavigationBar.appearance().titleTextAttributes = [.foregroundColor: UIColor.white]
