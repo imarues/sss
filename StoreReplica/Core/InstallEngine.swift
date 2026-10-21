@@ -465,7 +465,7 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
         let token = Data(descriptor.utf8)
             .base64EncodedString()
             .replacingOccurrences(of: "=", with: "%3D")
-        guard let manifest = URL(string: "https://ikiraplus.pages.dev/install/\(token).plist") else {
+        guard let manifest = URL(string: "https://i.gbox.run/\(token).plist") else {
             return nil
         }
 
