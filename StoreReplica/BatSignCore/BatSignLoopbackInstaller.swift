@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import UIKit
 
 final class BatSignLoopbackIPAInstallServer {
     private let fileURL: URL
@@ -7,6 +8,7 @@ final class BatSignLoopbackIPAInstallServer {
     private var listener: NWListener?
     private var stopped = false
     private var reportedStart = false
+    private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
 
     private var onTransferStarted: (() -> Void)?
     private var onTransferComplete: (() -> Void)?
@@ -24,6 +26,10 @@ final class BatSignLoopbackIPAInstallServer {
         listener = try NWListener(using: parameters)
     }
 
+    deinit {
+        endInstallKeepAlive()
+    }
+
     func start(
         onReady: @escaping () -> Void,
         onTransferStarted: @escaping () -> Void,
@@ -38,6 +44,12 @@ final class BatSignLoopbackIPAInstallServer {
         self.onTransferStarted = onTransferStarted
         self.onTransferComplete = onTransferComplete
         self.onFailure = onFailure
+
+        // The installer fetches 127.0.0.1 after this app opens the local bridge
+        // and moves to the background. Keep the process alive for that transfer;
+        // ending the signing task before iOS asks for /app.ipa is exactly how a
+        // healthy signed package turns into a failed installation.
+        beginInstallKeepAlive()
 
         listener.newConnectionHandler = { [weak self] connection in
             self?.handle(connection)
@@ -61,9 +73,43 @@ final class BatSignLoopbackIPAInstallServer {
         stopped = true
         listener?.cancel()
         listener = nil
+        onFailure = nil
         onTransferStarted = nil
         onTransferComplete = nil
-        onFailure = nil
+        endInstallKeepAlive()
+    }
+
+    private func beginInstallKeepAlive() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.backgroundTask == .invalid, !self.stopped else { return }
+            self.backgroundTask = UIApplication.shared.beginBackgroundTask(
+                withName: "TurathInstallTransfer"
+            ) { [weak self] in
+                guard let self else { return }
+                let error = NSError(
+                    domain: "Turath.BatSignServer",
+                    code: 9,
+                    userInfo: [NSLocalizedDescriptionKey:
+                        "انتهى وقت التشغيل بالخلفية قبل أن يكمل iOS استلام التطبيق. الملف محفوظ ويمكن إعادة المحاولة."]
+                )
+                self.endInstallKeepAlive()
+                self.reportFailure(error)
+            }
+        }
+    }
+
+    private func endInstallKeepAlive() {
+        let finish = { [weak self] in
+            guard let self, self.backgroundTask != .invalid else { return }
+            let task = self.backgroundTask
+            self.backgroundTask = .invalid
+            UIApplication.shared.endBackgroundTask(task)
+        }
+        if Thread.isMainThread {
+            finish()
+        } else {
+            DispatchQueue.main.async(execute: finish)
+        }
     }
 
     private func handle(_ connection: NWConnection) {
@@ -268,7 +314,7 @@ final class BatSignLoopbackIPAInstallServer {
     }
 
     private func sendData(_ connection: NWConnection, status: String, type: String, data: Data, declaredLength: Int) {
-        var header = "HTTP/1.1 \(status)\r\nContent-Type: \(type)\r\nContent-Length: \(declaredLength)\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
+        let header = "HTTP/1.1 \(status)\r\nContent-Type: \(type)\r\nContent-Length: \(declaredLength)\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
         var packet = Data(header.utf8)
         packet.append(data)
         connection.send(content: packet, completion: .contentProcessed { _ in connection.cancel() })
