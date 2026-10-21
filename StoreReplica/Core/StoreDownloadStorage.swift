@@ -5,6 +5,7 @@ enum StoreDownloadStorageError: LocalizedError {
     case sourceMissing
     case emptyFile
     case invalidIPA
+    case truncatedFile
     case cannotStage
 
     var errorDescription: String? {
@@ -17,6 +18,8 @@ enum StoreDownloadStorageError: LocalizedError {
             return "ملف IPA الذي تم تنزيله فارغ."
         case .invalidIPA:
             return "الملف الذي تم تنزيله ليس ملف IPA صالحًا."
+        case .truncatedFile:
+            return "ملف IPA المحفوظ أصغر بكثير من الحجم المتوقع ويبدو أن التحميل لم يكتمل."
         case .cannotStage:
             return "تعذر حفظ التطبيق في التخزين الداخلي الآمن."
         }
@@ -26,8 +29,6 @@ enum StoreDownloadStorageError: LocalizedError {
 enum StoreDownloadStorage {
     private static let fm = FileManager.default
 
-    /// Durable storage used by the install pipeline. This is the authoritative copy.
-    /// Files/Documents is intentionally only an export surface and can never block signing/install.
     static var stagingRoot: URL {
         let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         return base.appendingPathComponent("TurathDownloads", isDirectory: true)
@@ -45,16 +46,7 @@ enum StoreDownloadStorage {
     }
 
     static func stagedURL(for app: StoreApp) -> URL? {
-        let job = StoreInstallJob(
-            id: "cache-check",
-            appID: app.id,
-            appName: app.name,
-            bundleID: app.bundleId ?? app.id,
-            version: app.version ?? "1.0",
-            iconURL: app.iconUrl,
-            downloadURL: app.effectiveDownloadURL ?? "",
-            expectedBytes: app.fileSize ?? 0
-        )
+        let job = jobForCacheCheck(app)
         return try? stagedURL(for: job)
     }
 
@@ -66,26 +58,28 @@ enum StoreDownloadStorage {
     }
 
     static func hasValidStagedIPA(for job: StoreInstallJob) -> Bool {
-        guard let url = try? stagedURL(for: job) else { return false }
-        return isValidIPA(at: url)
+        guard let url = try? stagedURL(for: job), isValidIPA(at: url) else { return false }
+        return sizeIsPlausible(url: url, expectedBytes: job.expectedBytes)
     }
 
     static func hasValidStagedIPA(for app: StoreApp) -> Bool {
-        guard let url = stagedURL(for: app) else { return false }
-        return isValidIPA(at: url)
+        let job = jobForCacheCheck(app)
+        return hasValidStagedIPA(for: job)
     }
 
     /// Take ownership of URLSession's completed file as quickly as possible.
-    /// A hard link on the app data volume is effectively instant even for multi-GB IPAs,
-    /// and remains valid after URLSession removes its temporary pathname. If the system
-    /// placed the temporary file on a different volume, fall back to a normal copy.
+    /// A hard link on the app data volume is effectively instant even for multi-GB IPAs.
     static func stageFinishedDownload(from temporaryURL: URL, job: StoreInstallJob) throws -> URL {
         let destination = try stagedURL(for: job)
         let directory = destination.deletingLastPathComponent()
         try makeDirectory(directory)
 
-        if isValidIPA(at: destination) {
+        if isValidIPA(at: destination), sizeIsPlausible(url: destination, expectedBytes: job.expectedBytes) {
             return destination
+        }
+        // Never let an old partial file win just because it starts with the ZIP signature.
+        if fm.fileExists(atPath: destination.path) {
+            try? fm.removeItem(at: destination)
         }
 
         guard fm.fileExists(atPath: temporaryURL.path) else {
@@ -100,14 +94,11 @@ enum StoreDownloadStorage {
         defer { try? fm.removeItem(at: incoming) }
 
         var staged = false
-
-        // Fast path: same-volume hard link. URLSession can delete its own link after
-        // the delegate returns without touching the inode now owned by staging.
         do {
             try fm.linkItem(at: temporaryURL, to: incoming)
             staged = true
         } catch {
-            // Cross-volume or unsupported link: copy is the safe fallback.
+            // URLSession's temporary file may live on a different volume.
         }
 
         if !staged {
@@ -115,7 +106,9 @@ enum StoreDownloadStorage {
                 try fm.copyItem(at: temporaryURL, to: incoming)
                 staged = true
             } catch {
-                if isValidIPA(at: destination) { return destination }
+                if isValidIPA(at: destination), sizeIsPlausible(url: destination, expectedBytes: job.expectedBytes) {
+                    return destination
+                }
                 if !fm.fileExists(atPath: temporaryURL.path) {
                     throw StoreDownloadStorageError.sourceMissing
                 }
@@ -124,8 +117,10 @@ enum StoreDownloadStorage {
         }
 
         guard staged else { throw StoreDownloadStorageError.cannotStage }
-
         try validateIPA(at: incoming)
+        guard sizeIsPlausible(url: incoming, expectedBytes: job.expectedBytes) else {
+            throw StoreDownloadStorageError.truncatedFile
+        }
         try protect(incoming)
 
         do {
@@ -135,21 +130,29 @@ enum StoreDownloadStorage {
                 try fm.moveItem(at: incoming, to: destination)
             }
         } catch {
-            if isValidIPA(at: destination) { return destination }
+            if isValidIPA(at: destination), sizeIsPlausible(url: destination, expectedBytes: job.expectedBytes) {
+                return destination
+            }
             throw StoreDownloadStorageError.cannotStage
         }
 
         try validateIPA(at: destination)
+        guard sizeIsPlausible(url: destination, expectedBytes: job.expectedBytes) else {
+            try? fm.removeItem(at: destination)
+            throw StoreDownloadStorageError.truncatedFile
+        }
         try protect(destination)
         return destination
     }
 
-    /// Import a previously exported Documents copy into durable staging if an older
-    /// build downloaded it before the staging architecture existed.
     static func recoverLegacyExportIfPossible(job: StoreInstallJob) -> URL? {
         guard let staged = try? stagedURL(for: job) else { return nil }
-        if isValidIPA(at: staged) { return staged }
-        guard let exported = try? exportedURL(for: job), isValidIPA(at: exported) else { return nil }
+        if isValidIPA(at: staged), sizeIsPlausible(url: staged, expectedBytes: job.expectedBytes) {
+            return staged
+        }
+        guard let exported = try? exportedURL(for: job),
+              isValidIPA(at: exported),
+              sizeIsPlausible(url: exported, expectedBytes: job.expectedBytes) else { return nil }
 
         let incoming = staged.deletingLastPathComponent().appendingPathComponent(
             staged.lastPathComponent + ".legacy-" + UUID().uuidString
@@ -167,15 +170,15 @@ enum StoreDownloadStorage {
         }
     }
 
-    /// Best-effort Files export. This runs only after signing/install work no longer
-    /// needs the storage bandwidth, so it can never make the 100% or Signing stages slow.
+    /// Best-effort Files export. It intentionally runs after signing so this copy
+    /// cannot make the 100%/Signing stage slower.
     @discardableResult
     static func exportToFiles(stagedURL: URL, job: StoreInstallJob) -> Bool {
-        guard isValidIPA(at: stagedURL), let destination = try? exportedURL(for: job) else {
-            return false
-        }
+        guard isValidIPA(at: stagedURL),
+              sizeIsPlausible(url: stagedURL, expectedBytes: job.expectedBytes),
+              let destination = try? exportedURL(for: job) else { return false }
 
-        if isValidIPA(at: destination) {
+        if isValidIPA(at: destination), sizeIsPlausible(url: destination, expectedBytes: job.expectedBytes) {
             return true
         }
 
@@ -188,6 +191,7 @@ enum StoreDownloadStorage {
         do {
             try fm.copyItem(at: stagedURL, to: incoming)
             try validateIPA(at: incoming)
+            guard sizeIsPlausible(url: incoming, expectedBytes: job.expectedBytes) else { return false }
             if fm.fileExists(atPath: destination.path) {
                 _ = try fm.replaceItemAt(destination, withItemAt: incoming)
             } else {
@@ -205,8 +209,8 @@ enum StoreDownloadStorage {
         (try? validateIPA(at: url)) != nil
     }
 
-    /// Keep the hot-path validation intentionally cheap. Real archive extraction is done by
-    /// the same Zip engine used by BatSign; this check only rejects missing/empty/non-ZIP data.
+    /// Cheap hot-path validation. Full extraction is deliberately deferred to
+    /// BatSignPackagePipeline so reaching 100% does not spend another full unzip pass.
     static func validateIPA(at url: URL) throws {
         guard fm.fileExists(atPath: url.path) else {
             throw StoreDownloadStorageError.sourceMissing
@@ -223,6 +227,29 @@ enum StoreDownloadStorage {
               signature[signature.index(after: signature.startIndex)] == 0x4B else {
             throw StoreDownloadStorageError.invalidIPA
         }
+    }
+
+    private static func sizeIsPlausible(url: URL, expectedBytes: Int64) -> Bool {
+        // Source metadata can be rounded or absent, so only reject an obvious partial file.
+        // A valid full package should never be less than half of a declared multi-megabyte size.
+        guard expectedBytes >= 5 * 1024 * 1024 else { return true }
+        guard let attrs = try? fm.attributesOfItem(atPath: url.path),
+              let value = attrs[.size] as? NSNumber else { return false }
+        let actual = value.int64Value
+        return actual >= expectedBytes / 2
+    }
+
+    private static func jobForCacheCheck(_ app: StoreApp) -> StoreInstallJob {
+        StoreInstallJob(
+            id: "cache-check",
+            appID: app.id,
+            appName: app.name,
+            bundleID: app.bundleId ?? app.id,
+            version: app.version ?? "1.0",
+            iconURL: app.iconUrl,
+            downloadURL: app.effectiveDownloadURL ?? "",
+            expectedBytes: app.fileSize ?? 0
+        )
     }
 
     private static func fileName(for job: StoreInstallJob) -> String {
