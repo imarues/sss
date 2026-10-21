@@ -27,7 +27,7 @@ actor AppleAppStoreLookup {
         if let running = inFlight[bundleID] { return await running.value }
 
         let task = Task<AppleAppStoreItem?, Never> {
-            let local = (Locale.current.regionCode ?? "us").lowercased()
+            let local = (Locale.current.region?.identifier ?? "us").lowercased()
             if let result = await Self.fetch(bundleID: bundleID, country: local) {
                 return result
             }
