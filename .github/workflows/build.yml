@@ -3,7 +3,7 @@ name: Build IPA
 on:
   workflow_dispatch:
   push:
-    branches: [main, batsign-root-fix]
+    branches: [main, batsign-root-fix, download-engine-root-fix]
 
 jobs:
   build:
