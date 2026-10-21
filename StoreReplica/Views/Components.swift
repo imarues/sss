@@ -37,6 +37,7 @@ struct InstallPill: View {
 
     @ObservedObject private var installer = StoreInstallCoordinator.shared
     @State private var showSigningSetup = false
+    @State private var installErrorMessage: String?
 
     private var installState: StoreInstallState {
         guard let app else { return StoreInstallState() }
@@ -100,6 +101,24 @@ struct InstallPill: View {
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         }
+        .onChange(of: installState) { newState in
+            if newState.phase == .failed {
+                installErrorMessage = newState.message ?? "تعذر إكمال عملية التثبيت."
+            }
+        }
+        .alert(
+            "تعذر التثبيت",
+            isPresented: Binding(
+                get: { installErrorMessage != nil },
+                set: { if !$0 { installErrorMessage = nil } }
+            )
+        ) {
+            Button("حسنًا", role: .cancel) {
+                installErrorMessage = nil
+            }
+        } message: {
+            Text(installErrorMessage ?? "")
+        }
     }
 }
 
@@ -122,18 +141,18 @@ private struct SigningSetupSheet: View {
                     .foregroundStyle(StoreTheme.textPrimary)
                     .frame(maxWidth: .infinity, alignment: .trailing)
 
-                Text("تُضاف الشهادة مرة واحدة فقط. بعدها يصير التحميل والتوقيع والتثبيت تلقائيًا مثل BatSign.")
+                Text("اختر ملف الشهادة بصيغة .p12 وملف التفعيل بصيغة .mobileprovision. تُحفظ الملفات على الجهاز وتُستخدم تلقائيًا في عمليات التثبيت التالية.")
                     .font(AppFont.regular(12))
                     .foregroundStyle(StoreTheme.textSecondary)
                     .multilineTextAlignment(.trailing)
 
                 setupFileButton(
-                    title: hasP12 ? "تمت إضافة P12" : "اختيار ملف P12",
+                    title: hasP12 ? "تمت إضافة شهادة .p12" : "اختيار شهادة .p12",
                     icon: hasP12 ? "checkmark.circle.fill" : "key.fill"
                 ) { pickingP12 = true }
 
                 setupFileButton(
-                    title: hasProvision ? "تمت إضافة MobileProvision" : "اختيار MobileProvision",
+                    title: hasProvision ? "تمت إضافة .mobileprovision" : "اختيار .mobileprovision",
                     icon: hasProvision ? "checkmark.circle.fill" : "doc.badge.gearshape"
                 ) { pickingProvision = true }
 
@@ -154,18 +173,15 @@ private struct SigningSetupSheet: View {
 
                 Button {
                     do {
-                        try SigningAssetProvider.savePassword(password)
-                        guard SigningAssetProvider.hasCredentials else {
-                            errorMessage = "أضف ملف P12 وMobileProvision أولًا."
-                            return
-                        }
+                        try SigningAssetProvider.validateAndSavePassword(password)
+                        errorMessage = nil
                         onReady()
                         dismiss()
                     } catch {
                         errorMessage = error.localizedDescription
                     }
                 } label: {
-                    Text("حفظ وبدء التثبيت")
+                    Text("فحص الشهادة وحفظها")
                         .font(AppFont.bold(14))
                         .foregroundStyle(StoreTheme.onAccent)
                         .frame(maxWidth: .infinity, minHeight: 46)
@@ -187,24 +203,30 @@ private struct SigningSetupSheet: View {
             }
         }
         .preferredColorScheme(.dark)
-        .fileImporter(isPresented: $pickingP12, allowedContentTypes: [.data]) { result in
-            do {
-                let url = try result.get()
-                try SigningAssetProvider.importP12(from: url)
-                hasP12 = true
-                errorMessage = nil
-            } catch {
-                errorMessage = error.localizedDescription
+        .sheet(isPresented: $pickingP12) {
+            SigningFilePicker(allowedContentTypes: [.signingP12]) { urls in
+                pickingP12 = false
+                guard let url = urls.first else { return }
+                do {
+                    try SigningAssetProvider.importP12(from: url)
+                    hasP12 = true
+                    errorMessage = nil
+                } catch {
+                    errorMessage = error.localizedDescription
+                }
             }
         }
-        .fileImporter(isPresented: $pickingProvision, allowedContentTypes: [.data]) { result in
-            do {
-                let url = try result.get()
-                try SigningAssetProvider.importProvision(from: url)
-                hasProvision = true
-                errorMessage = nil
-            } catch {
-                errorMessage = error.localizedDescription
+        .sheet(isPresented: $pickingProvision) {
+            SigningFilePicker(allowedContentTypes: [.signingMobileProvision]) { urls in
+                pickingProvision = false
+                guard let url = urls.first else { return }
+                do {
+                    try SigningAssetProvider.importProvision(from: url)
+                    hasProvision = true
+                    errorMessage = nil
+                } catch {
+                    errorMessage = error.localizedDescription
+                }
             }
         }
         .onAppear {
