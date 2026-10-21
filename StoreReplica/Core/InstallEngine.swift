@@ -54,7 +54,7 @@ enum StoreInstallError: LocalizedError {
         case .signingFailed:
             return "فشل توقيع التطبيق. تحقق من الشهادة وملف MobileProvision."
         case .manifestURL:
-            return "تعذر إنشاء رابط التثبيت."
+            return "تعذر تجهيز رابط تثبيت iOS. التطبيق بقي محفوظًا ويمكن إعادة المحاولة."
         case .httpStatus(let status):
             return "فشل تحميل التطبيق من الخادم (HTTP \(status))."
         case .installerRejected:
@@ -302,7 +302,7 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
                 return
             }
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + 60) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 90) { [weak self] in
                 guard let self,
                       self.pendingInstallJob?.id == job.id,
                       !self.installTransferStarted else { return }
@@ -353,6 +353,39 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
         return String(cleaned.prefix(100))
     }
 
+    private func persistDownloadedIPA(from source: URL, to target: URL) throws {
+        let fm = FileManager.default
+        try? fm.removeItem(at: target)
+        guard fm.createFile(atPath: target.path, contents: nil) else {
+            throw StoreInstallError.saveDownloadedFile
+        }
+
+        do {
+            let input = try FileHandle(forReadingFrom: source)
+            let output = try FileHandle(forWritingTo: target)
+            defer {
+                try? input.close()
+                try? output.close()
+            }
+
+            while true {
+                let chunk = input.readData(ofLength: 2 * 1024 * 1024)
+                if chunk.isEmpty { break }
+                output.write(chunk)
+            }
+            try? output.synchronize()
+
+            let attrs = try fm.attributesOfItem(atPath: target.path)
+            let size = (attrs[.size] as? NSNumber)?.int64Value ?? 0
+            guard size > 0 else { throw StoreInstallError.saveDownloadedFile }
+            try? fm.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: target.path)
+        } catch {
+            try? fm.removeItem(at: target)
+            if let known = error as? StoreInstallError { throw known }
+            throw StoreInstallError.saveDownloadedFile
+        }
+    }
+
     private func transientDirectory() throws -> URL {
         let fm = FileManager.default
         let base = try fm.url(
@@ -388,23 +421,17 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
 
         do {
             let target = try cachedIPAURL(for: job)
-            let fm = FileManager.default
-            try? fm.removeItem(at: target)
-            do {
-                try fm.copyItem(at: tempURL, to: target)
-            } catch {
-                throw StoreInstallError.saveDownloadedFile
-            }
+            try persistDownloadedIPA(from: tempURL, to: target)
 
             publish(
                 appID: job.appID,
-                state: StoreInstallState(phase: .signing, progress: 0.92, speedText: nil, message: "اكتمل التحميل · جاري التوقيع")
+                state: StoreInstallState(phase: .signing, progress: 0.92, speedText: nil, message: "اكتمل التحميل · تم الحفظ · جاري التوقيع")
             )
             InstallLiveActivityBridge.update(
                 job: job,
                 phase: .signing,
                 progress: 0.92,
-                detail: "اكتمل التحميل · جاري التوقيع",
+                detail: "اكتمل التحميل · تم الحفظ · جاري التوقيع",
                 force: true
             )
 
@@ -520,6 +547,11 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
             progress: nil
         )
         try fm.moveItem(at: zipOutput, to: output)
+
+        let attrs = try fm.attributesOfItem(atPath: output.path)
+        guard ((attrs[.size] as? NSNumber)?.int64Value ?? 0) > 0 else {
+            throw StoreInstallError.signingFailed
+        }
         return output
     }
 
@@ -538,26 +570,16 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
             server.start(
                 onReady: { [weak self] in
                     guard let self else { return }
-                    guard let link = Self.installURL(job: job) else {
-                        self.fail(job: job, error: StoreInstallError.manifestURL)
-                        return
-                    }
-
                     self.publish(
                         appID: job.appID,
                         state: StoreInstallState(
                             phase: .installing,
                             progress: 0.99,
                             speedText: nil,
-                            message: "جاهز لفتح مثبت iOS"
+                            message: "جاري فحص رابط تثبيت iOS"
                         )
                     )
-
-                    if UIApplication.shared.applicationState == .active {
-                        self.openInstallLink(link, job: job)
-                    } else {
-                        self.pendingInstallURL = link
-                    }
+                    self.prepareInstallHandoff(job: job)
                 },
                 onTransferStarted: { [weak self] in
                     guard let self, self.pendingInstallJob?.id == job.id else { return }
@@ -597,6 +619,52 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
         }
     }
 
+    private func prepareInstallHandoff(job: StoreInstallJob) {
+        guard let manifest = Self.manifestURL(job: job),
+              let link = Self.installURL(manifest: manifest) else {
+            fail(job: job, error: StoreInstallError.manifestURL)
+            return
+        }
+
+        var request = URLRequest(url: manifest)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.timeoutInterval = 15
+
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            guard let self else { return }
+            guard self.pendingInstallJob?.id == job.id else { return }
+
+            guard error == nil,
+                  let http = response as? HTTPURLResponse,
+                  (200...299).contains(http.statusCode),
+                  let data,
+                  let text = String(data: data, encoding: .utf8),
+                  text.contains("software-package"),
+                  text.contains("127.0.0.1:9800/app.ipa") else {
+                self.fail(job: job, error: StoreInstallError.manifestURL)
+                return
+            }
+
+            DispatchQueue.main.async {
+                guard self.pendingInstallJob?.id == job.id else { return }
+                self.publish(
+                    appID: job.appID,
+                    state: StoreInstallState(
+                        phase: .installing,
+                        progress: 0.99,
+                        speedText: nil,
+                        message: "جاهز لفتح مثبت iOS"
+                    )
+                )
+                if UIApplication.shared.applicationState == .active {
+                    self.openInstallLink(link, job: job)
+                } else {
+                    self.pendingInstallURL = link
+                }
+            }
+        }.resume()
+    }
+
     private func markInstallAttemptReady(job: StoreInstallJob, detail: String) {
         guard pendingInstallJob?.id == job.id else { return }
         publish(
@@ -626,15 +694,18 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
         installPromptOpenedAt = nil
     }
 
-    private static func installURL(job: StoreInstallJob) -> URL? {
-        let descriptor = "\(job.appName)/\(job.bundleID)/\(job.version)"
-        let token = Data(descriptor.utf8)
-            .base64EncodedString()
-            .replacingOccurrences(of: "=", with: "%3D")
-        guard let manifest = URL(string: "https://i.gbox.run/\(token).plist") else {
-            return nil
-        }
+    private static func manifestURL(job: StoreInstallJob) -> URL? {
+        var components = URLComponents(string: "https://api.palera.in/genPlist")
+        components?.queryItems = [
+            URLQueryItem(name: "bundleid", value: job.bundleID),
+            URLQueryItem(name: "name", value: job.appName),
+            URLQueryItem(name: "version", value: job.version.isEmpty ? "1.0" : job.version),
+            URLQueryItem(name: "fetchurl", value: "http://127.0.0.1:9800/app.ipa")
+        ]
+        return components?.url
+    }
 
+    private static func installURL(manifest: URL) -> URL? {
         var components = URLComponents()
         components.scheme = "itms-services"
         components.host = ""
