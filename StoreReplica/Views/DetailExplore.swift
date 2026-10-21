@@ -57,7 +57,7 @@ struct AppDetailView: View {
                     .foregroundStyle(StoreTheme.textSecondary)
                     .lineLimit(1)
             }
-            InstallPill(title: "تثبيت")
+            InstallPill(title: "تثبيت", app: app)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
