@@ -75,9 +75,10 @@ enum StoreDownloadStorage {
         return isValidIPA(at: url)
     }
 
-    /// Copy the URLSession-owned temporary file into Application Support first.
-    /// The copy is made to a unique sibling and only promoted after verification,
-    /// mirroring BatSign's staging approach so a partial file is never considered ready.
+    /// Take ownership of URLSession's completed file as quickly as possible.
+    /// A hard link on the app data volume is effectively instant even for multi-GB IPAs,
+    /// and remains valid after URLSession removes its temporary pathname. If the system
+    /// placed the temporary file on a different volume, fall back to a normal copy.
     static func stageFinishedDownload(from temporaryURL: URL, job: StoreInstallJob) throws -> URL {
         let destination = try stagedURL(for: job)
         let directory = destination.deletingLastPathComponent()
@@ -98,15 +99,31 @@ enum StoreDownloadStorage {
         try? fm.removeItem(at: incoming)
         defer { try? fm.removeItem(at: incoming) }
 
+        var staged = false
+
+        // Fast path: same-volume hard link. URLSession can delete its own link after
+        // the delegate returns without touching the inode now owned by staging.
         do {
-            try fm.copyItem(at: temporaryURL, to: incoming)
+            try fm.linkItem(at: temporaryURL, to: incoming)
+            staged = true
         } catch {
-            if isValidIPA(at: destination) { return destination }
-            if !fm.fileExists(atPath: temporaryURL.path) {
-                throw StoreDownloadStorageError.sourceMissing
-            }
-            throw StoreDownloadStorageError.cannotStage
+            // Cross-volume or unsupported link: copy is the safe fallback.
         }
+
+        if !staged {
+            do {
+                try fm.copyItem(at: temporaryURL, to: incoming)
+                staged = true
+            } catch {
+                if isValidIPA(at: destination) { return destination }
+                if !fm.fileExists(atPath: temporaryURL.path) {
+                    throw StoreDownloadStorageError.sourceMissing
+                }
+                throw StoreDownloadStorageError.cannotStage
+            }
+        }
+
+        guard staged else { throw StoreDownloadStorageError.cannotStage }
 
         try validateIPA(at: incoming)
         try protect(incoming)
@@ -150,7 +167,8 @@ enum StoreDownloadStorage {
         }
     }
 
-    /// Best-effort Files export. Failure here must never fail signing or installation.
+    /// Best-effort Files export. This runs only after signing/install work no longer
+    /// needs the storage bandwidth, so it can never make the 100% or Signing stages slow.
     @discardableResult
     static func exportToFiles(stagedURL: URL, job: StoreInstallJob) -> Bool {
         guard isValidIPA(at: stagedURL), let destination = try? exportedURL(for: job) else {
@@ -187,6 +205,8 @@ enum StoreDownloadStorage {
         (try? validateIPA(at: url)) != nil
     }
 
+    /// Keep the hot-path validation intentionally cheap. Real archive extraction is done by
+    /// the same Zip engine used by BatSign; this check only rejects missing/empty/non-ZIP data.
     static func validateIPA(at url: URL) throws {
         guard fm.fileExists(atPath: url.path) else {
             throw StoreDownloadStorageError.sourceMissing
@@ -197,8 +217,10 @@ enum StoreDownloadStorage {
 
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
-        let signature = handle.readData(ofLength: 2)
-        guard signature == Data([0x50, 0x4B]) else {
+        let signature = handle.readData(ofLength: 4)
+        guard signature.count >= 2,
+              signature[signature.startIndex] == 0x50,
+              signature[signature.index(after: signature.startIndex)] == 0x4B else {
             throw StoreDownloadStorageError.invalidIPA
         }
     }
