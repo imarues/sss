@@ -45,10 +45,6 @@ final class BatSignLoopbackIPAInstallServer {
         self.onTransferComplete = onTransferComplete
         self.onFailure = onFailure
 
-        // The installer fetches 127.0.0.1 after this app opens the local bridge
-        // and moves to the background. Keep the process alive for that transfer;
-        // ending the signing task before iOS asks for /app.ipa is exactly how a
-        // healthy signed package turns into a failed installation.
         beginInstallKeepAlive()
 
         listener.newConnectionHandler = { [weak self] connection in
@@ -175,21 +171,31 @@ final class BatSignLoopbackIPAInstallServer {
             sendText(connection, status: "400 Bad Request", body: "Missing install target")
             return
         }
-        let escaped = target
+
+        // <script> is a raw-text HTML element. HTML-escaping '&' to '&amp;' here
+        // corrupts the itms-services query instead of protecting it. Escape the
+        // JavaScript string and the fallback anchor independently.
+        let jsTarget = target
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "</", with: "<\\/")
+        let anchorTarget = target
             .replacingOccurrences(of: "&", with: "&amp;")
             .replacingOccurrences(of: "\"", with: "&quot;")
             .replacingOccurrences(of: "<", with: "&lt;")
             .replacingOccurrences(of: ">", with: "&gt;")
+
         let html = """
         <!doctype html><html><head><meta charset="utf-8">
         <meta name="viewport" content="width=device-width,initial-scale=1">
         <title>Install</title></head><body style="background:#000;color:#fff">
-        <script>window.location.href="\(escaped)";</script>
-        <a href="\(escaped)">Install</a></body></html>
+        <script>window.location.href="\(jsTarget)";</script>
+        <a href="\(anchorTarget)">Install</a></body></html>
         """
+        let body = Data(html.utf8)
         sendData(connection, status: "200 OK", type: "text/html; charset=utf-8",
-                 data: method == "HEAD" ? Data() : Data(html.utf8),
-                 declaredLength: Data(html.utf8).count)
+                 data: method == "HEAD" ? Data() : body,
+                 declaredLength: body.count)
     }
 
     private func serveIPA(_ connection: NWConnection, method: String, request: String) {
