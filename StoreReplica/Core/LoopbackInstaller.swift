@@ -6,6 +6,7 @@ final class LoopbackIPAInstallServer {
     private let queue = DispatchQueue(label: "com.ikiraplus.turath.installserver", qos: .userInitiated)
     private var listener: NWListener?
     private var onFailure: ((Error) -> Void)?
+    private var onTransferComplete: (() -> Void)?
     private var stopped = false
 
     init(fileURL: URL) throws {
@@ -27,6 +28,7 @@ final class LoopbackIPAInstallServer {
 
     func start(
         onReady: @escaping () -> Void,
+        onTransferComplete: @escaping () -> Void,
         onFailure: @escaping (Error) -> Void
     ) {
         guard let listener else {
@@ -39,6 +41,7 @@ final class LoopbackIPAInstallServer {
         }
 
         self.onFailure = onFailure
+        self.onTransferComplete = onTransferComplete
         listener.newConnectionHandler = { [weak self] connection in
             self?.handle(connection)
         }
@@ -62,12 +65,20 @@ final class LoopbackIPAInstallServer {
         listener?.cancel()
         listener = nil
         onFailure = nil
+        onTransferComplete = nil
     }
 
     private func report(_ error: Error) {
         guard !stopped else { return }
         DispatchQueue.main.async { [weak self] in
             self?.onFailure?(error)
+        }
+    }
+
+    private func reportTransferComplete() {
+        guard !stopped else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.onTransferComplete?()
         }
     }
 
@@ -137,6 +148,7 @@ final class LoopbackIPAInstallServer {
         let end = range?.1 ?? (size - 1)
         let length = max(0, end - start + 1)
         let partial = range != nil
+        let wholeFile = start == 0 && end == size - 1
 
         var headers = "HTTP/1.1 \(partial ? "206 Partial Content" : "200 OK")\r\n"
         headers += "Content-Type: application/octet-stream\r\n"
@@ -167,11 +179,11 @@ final class LoopbackIPAInstallServer {
                 connection.cancel()
                 return
             }
-            self.stream(connection, start: UInt64(start), length: length)
+            self.stream(connection, start: UInt64(start), length: length, wholeFile: wholeFile)
         })
     }
 
-    private func stream(_ connection: NWConnection, start: UInt64, length: Int64) {
+    private func stream(_ connection: NWConnection, start: UInt64, length: Int64, wholeFile: Bool) {
         guard let handle = try? FileHandle(forReadingFrom: fileURL) else {
             report(NSError(
                 domain: "TurathReplica.LoopbackInstaller",
@@ -188,6 +200,9 @@ final class LoopbackIPAInstallServer {
             guard remaining > 0 else {
                 try? handle.close()
                 connection.cancel()
+                if wholeFile {
+                    self.reportTransferComplete()
+                }
                 return
             }
 
