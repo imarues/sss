@@ -110,8 +110,6 @@ struct InstallPill: View {
                     installer.start(app)
                 }
             }
-            .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
         }
         .onChange(of: installState) { newState in
             if let error = newState.errorMessage, !error.isEmpty {
@@ -138,13 +136,14 @@ struct InstallPill: View {
 
 private struct SigningSetupSheet: View {
     @Environment(\.dismiss) private var dismiss
+
+    @State private var p12URL: URL?
+    @State private var profileURL: URL?
+    @State private var password = ""
     @State private var pickingP12 = false
     @State private var pickingProvision = false
-    @State private var hasP12 = false
-    @State private var hasProvision = false
-    @State private var password = ""
     @State private var errorMessage: String?
-    @FocusState private var passwordFocused: Bool
+    @State private var working = false
 
     let onReady: () -> Void
 
@@ -157,32 +156,28 @@ private struct SigningSetupSheet: View {
                         .foregroundStyle(StoreTheme.textPrimary)
                         .frame(maxWidth: .infinity, alignment: .trailing)
 
-                    Text("اختر ملف الشهادة بصيغة .p12 وملف التفعيل بصيغة .mobileprovision. تُحفظ الملفات على الجهاز وتُستخدم تلقائيًا في عمليات التثبيت التالية.")
+                    Text("اختر شهادة .p12 وملف .mobileprovision ثم اكتب كلمة المرور. يتم فحص الثلاثة معًا وحفظ نسخة داخل التطبيق مثل BatSign.")
                         .font(AppFont.regular(12))
                         .foregroundStyle(StoreTheme.textSecondary)
                         .multilineTextAlignment(.trailing)
 
                     setupFileButton(
-                        title: hasP12 ? "تمت إضافة شهادة .p12" : "اختيار شهادة .p12",
-                        icon: hasP12 ? "checkmark.circle.fill" : "key.fill"
+                        title: p12URL?.lastPathComponent ?? "اختيار شهادة .p12",
+                        icon: p12URL == nil ? "key.fill" : "checkmark.circle.fill"
                     ) {
-                        passwordFocused = false
                         pickingP12 = true
                     }
 
                     setupFileButton(
-                        title: hasProvision ? "تمت إضافة .mobileprovision" : "اختيار .mobileprovision",
-                        icon: hasProvision ? "checkmark.circle.fill" : "doc.badge.gearshape"
+                        title: profileURL?.lastPathComponent ?? "اختيار شهادة .mobileprovision",
+                        icon: profileURL == nil ? "doc.badge.gearshape" : "checkmark.circle.fill"
                     ) {
-                        passwordFocused = false
                         pickingProvision = true
                     }
 
                     SecureField("كلمة مرور P12", text: $password)
                         .textContentType(.password)
-                        .focused($passwordFocused)
                         .submitLabel(.done)
-                        .onSubmit { passwordFocused = false }
                         .multilineTextAlignment(.trailing)
                         .padding(.horizontal, 14)
                         .frame(height: 50)
@@ -198,39 +193,34 @@ private struct SigningSetupSheet: View {
                     }
 
                     Button {
-                        passwordFocused = false
-                        do {
-                            try SigningAssetProvider.validateAndSavePassword(password)
-                            errorMessage = nil
-                            onReady()
-                            dismiss()
-                        } catch {
-                            errorMessage = error.localizedDescription
-                        }
+                        importNow()
                     } label: {
-                        Text("فحص الشهادة وحفظها")
-                            .font(AppFont.bold(14))
-                            .foregroundStyle(StoreTheme.onAccent)
-                            .frame(maxWidth: .infinity, minHeight: 48)
-                            .background(StoreTheme.accent)
-                            .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+                        HStack(spacing: 8) {
+                            if working {
+                                ProgressView()
+                                    .tint(StoreTheme.onAccent)
+                            }
+                            Text(working ? "جاري فحص الشهادة..." : "فحص الشهادة وحفظها")
+                                .font(AppFont.bold(14))
+                                .foregroundStyle(StoreTheme.onAccent)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 48)
+                        .background(StoreTheme.accent)
+                        .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
                     }
                     .buttonStyle(.plain)
-                    .disabled(!hasP12 || !hasProvision)
-                    .opacity((hasP12 && hasProvision) ? 1 : 0.55)
+                    .disabled(p12URL == nil || profileURL == nil || password.isEmpty || working)
+                    .opacity((p12URL != nil && profileURL != nil && !password.isEmpty && !working) ? 1 : 0.55)
 
                     Spacer(minLength: 260)
                 }
                 .padding(18)
             }
-            .scrollDismissesKeyboard(.never)
             .background(StoreTheme.background.ignoresSafeArea())
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("إغلاق") {
-                        passwordFocused = false
-                        dismiss()
-                    }
+                    Button("إغلاق") { dismiss() }
                 }
             }
         }
@@ -239,40 +229,52 @@ private struct SigningSetupSheet: View {
             SigningFilePicker(allowedContentTypes: [.signingP12]) { urls in
                 pickingP12 = false
                 guard let url = urls.first else { return }
-                do {
-                    try SigningAssetProvider.importP12(from: url)
-                    hasP12 = true
-                    errorMessage = nil
-                    focusPasswordWhenReady()
-                } catch {
-                    errorMessage = error.localizedDescription
+                guard url.pathExtension.lowercased() == "p12" else {
+                    errorMessage = SigningAssetError.wrongP12Extension.localizedDescription
+                    return
                 }
+                p12URL = url
+                errorMessage = nil
             }
+            .ignoresSafeArea()
         }
         .sheet(isPresented: $pickingProvision) {
             SigningFilePicker(allowedContentTypes: [.signingMobileProvision]) { urls in
                 pickingProvision = false
                 guard let url = urls.first else { return }
-                do {
-                    try SigningAssetProvider.importProvision(from: url)
-                    hasProvision = true
-                    errorMessage = nil
-                    focusPasswordWhenReady()
-                } catch {
-                    errorMessage = error.localizedDescription
+                guard url.pathExtension.lowercased() == "mobileprovision" else {
+                    errorMessage = SigningAssetError.wrongProvisionExtension.localizedDescription
+                    return
                 }
+                profileURL = url
+                errorMessage = nil
             }
-        }
-        .onAppear {
-            hasP12 = SigningAssetProvider.hasP12File
-            hasProvision = SigningAssetProvider.hasProvisionFile
+            .ignoresSafeArea()
         }
     }
 
-    private func focusPasswordWhenReady() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
-            if hasP12 && hasProvision {
-                passwordFocused = true
+    private func importNow() {
+        guard let p12URL, let profileURL else { return }
+        working = true
+        errorMessage = nil
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                try SigningAssetProvider.importCertificate(
+                    p12URL: p12URL,
+                    profileURL: profileURL,
+                    password: password
+                )
+                DispatchQueue.main.async {
+                    working = false
+                    onReady()
+                    dismiss()
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    working = false
+                    errorMessage = error.localizedDescription
+                }
             }
         }
     }
@@ -286,6 +288,7 @@ private struct SigningSetupSheet: View {
                 Text(title)
                     .font(AppFont.medium(13))
                     .foregroundStyle(StoreTheme.textPrimary)
+                    .lineLimit(1)
             }
             .padding(.horizontal, 14)
             .frame(height: 48)
