@@ -9,6 +9,7 @@ struct TurathReplicaApp: App {
     @StateObject private var store = StoreViewModel()
 
     init() {
+        BatSignInstallURLBridge.install()
         FontLoader.registerBundledPingAR()
         UINavigationBar.appearance().largeTitleTextAttributes = [.foregroundColor: UIColor.white]
         UINavigationBar.appearance().titleTextAttributes = [.foregroundColor: UIColor.white]
