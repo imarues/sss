@@ -82,7 +82,8 @@ struct InstallPill: View {
                     .lineLimit(1)
             }
             .padding(.horizontal, 14)
-            .frame(minWidth: 62, height: 32)
+            .frame(minWidth: 62)
+            .frame(height: 32)
             .background(StoreTheme.accent)
             .clipShape(Capsule())
         }
