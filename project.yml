@@ -1,19 +1,60 @@
 name: TurathReplica
+
 options:
   bundleIdPrefix: com.ikiraplus
   deploymentTarget:
-    iOS: "16.0"
+    iOS: "16.1"
+
 settings:
   base:
     SWIFT_VERSION: 5.0
     DEVELOPMENT_TEAM: ""
+
+packages:
+  ZSignApple:
+    url: https://github.com/zwsn/zsign-ios.git
+    revision: a7f275fb4830ea48adf536fcddee7d05471970d0
+  ZIPFoundation:
+    url: https://github.com/weichsel/ZIPFoundation.git
+    from: 0.9.19
+
 targets:
+  TurathLiveActivity:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "16.1"
+    sources:
+      - path: TurathLiveActivity
+      - path: Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ikiraplus.turathreplica.liveactivity
+        PRODUCT_NAME: TurathLiveActivity
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: NO
+    info:
+      path: TurathLiveActivity/Info.plist
+      properties:
+        CFBundleDisplayName: "Turath Live"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+
   TurathReplica:
     type: application
     platform: iOS
-    deploymentTarget: "16.0"
+    deploymentTarget: "16.1"
     sources:
       - path: StoreReplica
+      - path: Shared
+    dependencies:
+      - package: ZSignApple
+        product: ZSignApple
+      - package: ZIPFoundation
+        product: ZIPFoundation
+      - target: TurathLiveActivity
+        embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.ikiraplus.turathreplica
@@ -27,6 +68,7 @@ targets:
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIStatusBarStyle: UIStatusBarStyleLightContent
         INFOPLIST_KEY_UIViewControllerBasedStatusBarAppearance: NO
+        INFOPLIST_KEY_NSSupportsLiveActivities: YES
         GENERATE_INFOPLIST_FILE: YES
     scheme:
       testTargets: []
