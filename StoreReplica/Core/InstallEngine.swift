@@ -1,6 +1,5 @@
 import Foundation
 import UIKit
-import ZIPFoundation
 import Zip
 import ZSign
 
@@ -55,7 +54,7 @@ enum StoreInstallError: LocalizedError {
         case .missingSigningAssets:
             return "ملفات الشهادة المطلوبة للتوقيع غير موجودة."
         case .invalidArchive:
-            return "ملف IPA غير صالح أو لا يحتوي Payload/App."
+            return "تعذر فك ملف IPA أو العثور على التطبيق داخله."
         case .invalidAppMetadata:
             return "تعذر قراءة معلومات التطبيق الحقيقية من Info.plist."
         case .signingFailed(let code):
@@ -110,7 +109,7 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
     private var bootstrapped = false
 
     private lazy var session: URLSession = {
-        let config = URLSessionConfiguration.background(withIdentifier: "com.ikiraplus.turathreplica.downloads.v2")
+        let config = URLSessionConfiguration.background(withIdentifier: "com.ikiraplus.turathreplica.downloads.v3")
         config.sessionSendsLaunchEvents = true
         config.isDiscretionary = false
         config.allowsCellularAccess = true
@@ -155,12 +154,12 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
                 }
 
                 if StoreDownloadStorage.hasValidStagedIPA(for: job) {
+                    self.publishReady(job: job, message: "محمّل ومحفوظ وجاهز للتثبيت")
                     if let staged = try? StoreDownloadStorage.stagedURL(for: job) {
                         self.exportQueue.async {
                             StoreDownloadStorage.exportToFiles(stagedURL: staged, job: job)
                         }
                     }
-                    self.publishReady(job: job, message: "محمّل ومحفوظ وجاهز للتثبيت")
                 }
                 self.removeJob(id)
             }
@@ -213,18 +212,12 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
         )
 
         guard SigningAssetProvider.hasCredentials else {
-            publishFailure(
-                appID: app.id,
-                text: StoreInstallError.missingSigningAssets.localizedDescription
-            )
+            publishFailure(appID: app.id, text: StoreInstallError.missingSigningAssets.localizedDescription)
             return
         }
 
         if let staged = existingStagedIPA(for: job) {
             setJob(job)
-            exportQueue.async {
-                StoreDownloadStorage.exportToFiles(stagedURL: staged, job: job)
-            }
             beginSigning(job: job, stagedIPA: staged, startLiveActivity: true)
             return
         }
@@ -282,7 +275,7 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
                 phase: .signing,
                 progress: 0.92,
                 speedText: nil,
-                message: "جاري التوقيع"
+                message: "جاري فك التطبيق والتوقيع"
             )
         )
         if startLiveActivity {
@@ -292,7 +285,7 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
             job: job,
             phase: .signing,
             progress: 0.92,
-            detail: "جاري التوقيع",
+            detail: "جاري فك التطبيق والتوقيع",
             force: true
         )
 
@@ -304,33 +297,28 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
     private func handleFinishedDownload(tempURL: URL, jobID: String) {
         guard let job = job(jobID) else { return }
 
+        // Switch away from the 100% download UI before staging so the user never
+        // watches a completed transfer spin while disk work happens behind it.
+        publish(
+            appID: job.appID,
+            state: StoreInstallState(
+                phase: .signing,
+                progress: 0.91,
+                speedText: nil,
+                message: "جاري تجهيز ملف IPA"
+            )
+        )
+        InstallLiveActivityBridge.update(
+            job: job,
+            phase: .signing,
+            progress: 0.91,
+            detail: "جاري تجهيز ملف IPA",
+            force: true
+        )
+
         do {
             let staged = try StoreDownloadStorage.stageFinishedDownload(from: tempURL, job: job)
-
-            exportQueue.async {
-                StoreDownloadStorage.exportToFiles(stagedURL: staged, job: job)
-            }
-
-            publish(
-                appID: job.appID,
-                state: StoreInstallState(
-                    phase: .signing,
-                    progress: 0.92,
-                    speedText: nil,
-                    message: "اكتمل التحميل · محفوظ داخليًا · جاري التوقيع"
-                )
-            )
-            InstallLiveActivityBridge.update(
-                job: job,
-                phase: .signing,
-                progress: 0.92,
-                detail: "اكتمل التحميل · جاري التوقيع",
-                force: true
-            )
-
-            signingQueue.async { [weak self] in
-                self?.signThenInstall(job: job, ipaURL: staged)
-            }
+            beginSigning(job: job, stagedIPA: staged, startLiveActivity: false)
         } catch StoreDownloadStorageError.sourceMissing {
             rescueFinishedDownload(job: job)
         } catch {
@@ -338,16 +326,13 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
         }
     }
 
-    /// URLSession owns its temporary file only for the duration of the completion callback.
-    /// If iOS has already reclaimed it, fetch once more and stage immediately from that callback.
     private func rescueFinishedDownload(job: StoreInstallJob) {
         lock.lock()
         let attempts = rescueAttempts[job.id] ?? 0
         rescueAttempts[job.id] = attempts + 1
         lock.unlock()
 
-        guard attempts == 0,
-              let url = URL(string: job.downloadURL) else {
+        guard attempts == 0, let url = URL(string: job.downloadURL) else {
             fail(job: job, error: StoreDownloadStorageError.sourceMissing)
             return
         }
@@ -358,7 +343,7 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
                 phase: .downloading,
                 progress: 0.90,
                 speedText: nil,
-                message: "جاري تثبيت نسخة التحميل في التخزين الداخلي"
+                message: "جاري استعادة ملف التحميل"
             )
         )
 
@@ -430,6 +415,11 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
         }
     }
 
+    /// BatSign-compatible hot path:
+    /// 1. Unpack with the same Zip library used by BatSign, not ZIPFoundation.
+    /// 2. Sign the extracted .app in place with ZSign.
+    /// 3. Rebuild the install IPA with no deflate compression, matching BatSign's
+    ///    fastest install packaging mode and avoiding a long second CPU pass.
     private func sign(job: StoreInstallJob, ipaURL: URL) throws -> SignedInstallArtifact {
         try StoreDownloadStorage.validateIPA(at: ipaURL)
 
@@ -444,21 +434,24 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
         defer { try? fm.removeItem(at: workingRoot) }
 
         do {
-            try fm.unzipItem(at: ipaURL, to: workingRoot)
+            Zip.addCustomFileExtension("ipa")
+            try Zip.unzipFile(
+                ipaURL,
+                destination: workingRoot,
+                overwrite: true,
+                password: nil,
+                progress: nil
+            )
         } catch {
             throw StoreInstallError.invalidArchive
         }
 
-        let payload = workingRoot.appendingPathComponent("Payload", isDirectory: true)
-        let apps = (try? fm.contentsOfDirectory(
-            at: payload,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        )) ?? []
-        guard let appURL = apps.first(where: { $0.pathExtension.lowercased() == "app" }) else {
+        guard let located = Self.locatePayloadAndApp(in: workingRoot) else {
             throw StoreInstallError.invalidArchive
         }
 
+        let payload = located.payload
+        let appURL = located.app
         let metadata = try Self.readMetadata(appURL: appURL, fallback: job)
 
         let code: Int32 = appURL.path.withCString { appPath in
@@ -490,15 +483,19 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
         try? fm.removeItem(at: zipOutput)
         defer { try? fm.removeItem(at: zipOutput) }
 
-        try Zip.zipFiles(
-            paths: [payload],
-            zipFilePath: zipOutput,
-            password: nil,
-            compression: .BestSpeed,
-            progress: nil
-        )
-        try fm.moveItem(at: zipOutput, to: output)
-        try StoreDownloadStorage.validateIPA(at: output)
+        do {
+            try Zip.zipFiles(
+                paths: [payload],
+                zipFilePath: zipOutput,
+                password: nil,
+                compression: .NoCompression,
+                progress: nil
+            )
+            try fm.moveItem(at: zipOutput, to: output)
+            try StoreDownloadStorage.validateIPA(at: output)
+        } catch {
+            throw StoreInstallError.invalidArchive
+        }
 
         return SignedInstallArtifact(
             ipaURL: output,
@@ -506,6 +503,41 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
             bundleID: metadata.bundleID,
             version: metadata.version
         )
+    }
+
+    /// Some valid IPAs are wrapped by one extra directory. BatSign's Zip path can
+    /// import them, so search for Payload instead of assuming it is always root/Payload.
+    private static func locatePayloadAndApp(in root: URL) -> (payload: URL, app: URL)? {
+        let fm = FileManager.default
+
+        func app(in payload: URL) -> URL? {
+            guard let children = try? fm.contentsOfDirectory(
+                at: payload,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            ) else { return nil }
+            return children.first { $0.pathExtension.lowercased() == "app" }
+        }
+
+        let direct = root.appendingPathComponent("Payload", isDirectory: true)
+        if let found = app(in: direct) {
+            return (direct, found)
+        }
+
+        guard let enumerator = fm.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles],
+            errorHandler: nil
+        ) else { return nil }
+
+        for case let candidate as URL in enumerator {
+            guard candidate.lastPathComponent == "Payload" else { continue }
+            if let found = app(in: candidate) {
+                return (candidate, found)
+            }
+        }
+        return nil
     }
 
     private static func readMetadata(
@@ -595,15 +627,17 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
                 },
                 onTransferComplete: { [weak self] in
                     guard let self, self.pendingInstallJob?.id == job.id else { return }
-                    self.publishReady(
-                        job: job,
-                        message: "محمّل ومحفوظ وجاهز لإعادة التثبيت"
-                    )
+                    self.publishReady(job: job, message: "محمّل ومحفوظ وجاهز لإعادة التثبيت")
                     InstallLiveActivityBridge.finish(
                         job: job,
                         success: true,
                         detail: "تم إرسال التطبيق إلى مثبت iOS"
                     )
+                    if let staged = try? StoreDownloadStorage.stagedURL(for: job) {
+                        self.exportQueue.async {
+                            StoreDownloadStorage.exportToFiles(stagedURL: staged, job: job)
+                        }
+                    }
                     self.cleanupInstallAttempt(deleteSigned: true)
                     self.removeJob(job.id)
                 },
@@ -679,6 +713,11 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
         guard pendingInstallJob?.id == job.id else { return }
         publishReady(job: job, message: detail)
         InstallLiveActivityBridge.finish(job: job, success: true, detail: "محفوظ وجاهز للتثبيت")
+        if let staged = try? StoreDownloadStorage.stagedURL(for: job) {
+            exportQueue.async {
+                StoreDownloadStorage.exportToFiles(stagedURL: staged, job: job)
+            }
+        }
         cleanupInstallAttempt(deleteSigned: true)
         removeJob(job.id)
     }
@@ -716,6 +755,11 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
                     errorMessage: text
                 )
             )
+            if let staged = try? StoreDownloadStorage.stagedURL(for: job) {
+                exportQueue.async {
+                    StoreDownloadStorage.exportToFiles(stagedURL: staged, job: job)
+                }
+            }
         } else {
             publishFailure(appID: job.appID, text: text)
         }
@@ -882,8 +926,6 @@ extension StoreInstallCoordinator: URLSessionDownloadDelegate, URLSessionDelegat
               let id = task.taskDescription,
               let job = job(id) else { return }
 
-        // didFinishDownloadingTo may already have staged a valid file. A late transport
-        // callback must not destroy a job that has moved on to signing.
         if StoreDownloadStorage.hasValidStagedIPA(for: job) {
             return
         }
