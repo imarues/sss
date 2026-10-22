@@ -80,6 +80,8 @@ targets:
         UIStatusBarStyle: UIStatusBarStyleLightContent
         UIViewControllerBasedStatusBarAppearance: false
         NSSupportsLiveActivities: true
+        UIBackgroundModes:
+          - audio
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
         UISupportedInterfaceOrientations:
