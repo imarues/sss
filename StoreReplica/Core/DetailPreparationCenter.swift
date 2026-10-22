@@ -4,8 +4,8 @@ import UIKit
 import Zip
 
 // Persistent worker for duplicate / dylib operations launched from app details.
-// The downloaded IPA is copied out of URLSession's temporary location before
-// any expensive work begins, so leaving the sheet or app cannot invalidate it.
+// A completed IPA download is promoted immediately into persistent app storage.
+// We never auto-restart a completed/lost download: that prevents endless download loops.
 enum DetailPreparationKind: String, Codable {
     case duplicate
     case dylib
@@ -37,7 +37,6 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
     private let lock = NSLock()
     private var record: DetailPreparationRecord?
     private var preparingRecordID: String?
-    private var downloadRecoveryAttempts: [String: Int] = [:]
 
     private lazy var session: URLSession = {
         let config = URLSessionConfiguration.background(withIdentifier: Self.backgroundSessionIdentifier)
@@ -45,7 +44,7 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
         config.isDiscretionary = false
         config.allowsCellularAccess = true
         config.waitsForConnectivity = false
-        config.httpMaximumConnectionsPerHost = 2
+        config.httpMaximumConnectionsPerHost = 1
         config.timeoutIntervalForRequest = 60
         config.timeoutIntervalForResource = 7 * 24 * 60 * 60
         return URLSession(configuration: config, delegate: self, delegateQueue: nil)
@@ -102,7 +101,7 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
                 return
             }
 
-            self.restartDownload(record: current, reason: "جاري استكمال التحميل")
+            self.fail(record: current, error: SideloadSigningError.downloadFailed)
         }
     }
 
@@ -168,14 +167,14 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
 
             if StoreDownloadStorage.hasValidStagedIPA(for: app),
                let cached = StoreDownloadStorage.stagedURL(for: app) {
-                publishProgress(0.48, text: "استخدام النسخة المحفوظة", record: next)
+                publishProgress(0.50, text: "استخدام النسخة المحفوظة", record: next)
                 prepare(record: next, sourceIPA: cached)
                 return
             }
 
             try startDownload(record: next)
         } catch {
-            publishError(error.localizedDescription)
+            fail(record: snapshotRecord() ?? DetailPreparationRecord(id: UUID().uuidString, kind: kind, app: app, copyNumber: copyNumber, dylibPaths: []), error: error)
         }
     }
 
@@ -195,38 +194,6 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
         let task = session.downloadTask(with: request)
         task.taskDescription = record.id
         task.resume()
-    }
-
-    private func restartDownload(record: DetailPreparationRecord, reason: String) {
-        lock.lock()
-        let attempts = downloadRecoveryAttempts[record.id] ?? 0
-        downloadRecoveryAttempts[record.id] = attempts + 1
-        preparingRecordID = nil
-        lock.unlock()
-
-        guard attempts < 2 else {
-            fail(record: record, error: StoreDownloadStorageError.sourceMissing)
-            return
-        }
-
-        let stable = persistentSourceURL(for: record)
-        if StoreDownloadStorage.isValidIPA(at: stable) {
-            prepare(record: record, sourceIPA: stable)
-            return
-        }
-
-        if StoreDownloadStorage.hasValidStagedIPA(for: record.app),
-           let cached = StoreDownloadStorage.stagedURL(for: record.app) {
-            prepare(record: record, sourceIPA: cached)
-            return
-        }
-
-        publishProgress(0.48, text: reason, record: record)
-        do {
-            try startDownload(record: record)
-        } catch {
-            fail(record: record, error: error)
-        }
     }
 
     private func prepare(record: DetailPreparationRecord, sourceIPA: URL) {
@@ -300,9 +267,6 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
                     }
                     self.finishBackgroundEventsIfPossible()
                 }
-            } catch StoreDownloadStorageError.sourceMissing {
-                StoreInstallKeepAlive.shared.end(hold)
-                self.restartDownload(record: record, reason: "إعادة استلام ملف التطبيق")
             } catch {
                 StoreInstallKeepAlive.shared.end(hold)
                 self.fail(record: record, error: error)
@@ -406,30 +370,76 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
         }
         try? fm.removeItem(at: destination)
 
-        guard fm.fileExists(atPath: temporaryURL.path) else {
-            throw StoreDownloadStorageError.sourceMissing
-        }
+        var lastError: Error?
 
         do {
             try fm.moveItem(at: temporaryURL, to: destination)
+            try StoreDownloadStorage.validateIPA(at: destination)
+            try protectFile(destination)
+            cacheOriginalSource(destination, record: record)
+            return destination
         } catch {
-            do {
-                try fm.copyItem(at: temporaryURL, to: destination)
-            } catch {
-                if !fm.fileExists(atPath: temporaryURL.path) {
-                    throw StoreDownloadStorageError.sourceMissing
-                }
-                let data = try Data(contentsOf: temporaryURL, options: [.mappedIfSafe])
-                try data.write(to: destination, options: .atomic)
-            }
+            lastError = error
+            try? fm.removeItem(at: destination)
         }
 
-        try StoreDownloadStorage.validateIPA(at: destination)
-        try? fm.setAttributes(
+        do {
+            try fm.copyItem(at: temporaryURL, to: destination)
+            try StoreDownloadStorage.validateIPA(at: destination)
+            try protectFile(destination)
+            cacheOriginalSource(destination, record: record)
+            return destination
+        } catch {
+            lastError = error
+            try? fm.removeItem(at: destination)
+        }
+
+        do {
+            let data = try Data(contentsOf: temporaryURL, options: [.mappedIfSafe])
+            guard !data.isEmpty else { throw StoreDownloadStorageError.emptyFile }
+            try data.write(to: destination, options: .atomic)
+            try StoreDownloadStorage.validateIPA(at: destination)
+            try protectFile(destination)
+            cacheOriginalSource(destination, record: record)
+            return destination
+        } catch {
+            lastError = error
+            try? fm.removeItem(at: destination)
+        }
+
+        if !fm.fileExists(atPath: temporaryURL.path) {
+            throw StoreDownloadStorageError.sourceMissing
+        }
+        throw lastError ?? StoreDownloadStorageError.cannotStage
+    }
+
+    private func cacheOriginalSource(_ source: URL, record: DetailPreparationRecord) {
+        guard let destination = StoreDownloadStorage.stagedURL(for: record.app) else { return }
+        if StoreDownloadStorage.isValidIPA(at: destination) { return }
+
+        let incoming = destination.deletingLastPathComponent()
+            .appendingPathComponent(destination.lastPathComponent + ".cache-" + UUID().uuidString)
+        try? fm.removeItem(at: incoming)
+        defer { try? fm.removeItem(at: incoming) }
+
+        do {
+            try fm.copyItem(at: source, to: incoming)
+            try StoreDownloadStorage.validateIPA(at: incoming)
+            if fm.fileExists(atPath: destination.path) {
+                try? fm.removeItem(at: destination)
+            }
+            try fm.moveItem(at: incoming, to: destination)
+            try protectFile(destination)
+        } catch {
+            // Cache is an optimization only. The current operation still owns source.ipa.
+        }
+    }
+
+    private func protectFile(_ url: URL) throws {
+        try fm.setAttributes(
             [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
-            ofItemAtPath: destination.path
+            ofItemAtPath: url.path
         )
-        return destination
     }
 
     private func persistentSourceURL(for record: DetailPreparationRecord) -> URL {
@@ -453,7 +463,6 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
         lock.lock()
         record = value
         preparingRecordID = nil
-        downloadRecoveryAttempts[value.id] = 0
         if let data = try? JSONEncoder().encode(value) {
             try? data.write(to: recordFile, options: .atomic)
         }
@@ -488,10 +497,8 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
 
     private func clearRecord() {
         lock.lock()
-        let oldID = record?.id
         record = nil
         preparingRecordID = nil
-        if let oldID { downloadRecoveryAttempts[oldID] = nil }
         try? fm.removeItem(at: recordFile)
         lock.unlock()
         activeAppID = nil
@@ -540,8 +547,6 @@ extension DetailPreparationCenter: URLSessionDownloadDelegate, URLSessionDelegat
             let stable = try persistDownloadedSource(from: location, record: current)
             publishProgress(0.52, text: "تم التحميل · جاري تجهيز التطبيق", record: current)
             prepare(record: current, sourceIPA: stable)
-        } catch StoreDownloadStorageError.sourceMissing {
-            restartDownload(record: current, reason: "اكتمل التحميل · إعادة استلام الملف")
         } catch {
             fail(record: current, error: error)
         }
@@ -554,7 +559,14 @@ extension DetailPreparationCenter: URLSessionDownloadDelegate, URLSessionDelegat
 
         let stable = persistentSourceURL(for: current)
         if StoreDownloadStorage.isValidIPA(at: stable) { return }
-        restartDownload(record: current, reason: "انقطع التحميل · جاري الاستكمال")
+
+        if StoreDownloadStorage.hasValidStagedIPA(for: current.app),
+           let cached = StoreDownloadStorage.stagedURL(for: current.app) {
+            prepare(record: current, sourceIPA: cached)
+            return
+        }
+
+        fail(record: current, error: error)
     }
 
     func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
