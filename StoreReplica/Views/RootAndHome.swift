@@ -123,18 +123,57 @@ struct FloatingStoreTabBar: View {
 struct StoreHeader: View {
     @EnvironmentObject private var store: StoreViewModel
     @State private var showSettings = false
+    @State private var showSigningHub = false
+
     var body: some View {
         HStack(spacing: 12) {
-            Button { showSettings = true } label: {
-                Image(systemName: "person.crop.circle.fill").font(.system(size: 29, weight: .medium)).foregroundStyle(StoreTheme.accent)
+            HStack(spacing: 9) {
+                Button { showSettings = true } label: {
+                    ZStack {
+                        Circle().fill(StoreTheme.surface)
+                        Image(systemName: "gearshape.fill")
+                            .font(.system(size: 17, weight: .bold))
+                            .foregroundStyle(StoreTheme.textPrimary)
+                    }
+                    .frame(width: 42, height: 42)
+                }
+                .buttonStyle(.plain)
+
+                Button { showSigningHub = true } label: {
+                    ZStack {
+                        Circle().fill(StoreTheme.surface)
+                        Image(systemName: "square.and.arrow.down")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(StoreTheme.textPrimary)
+                    }
+                    .frame(width: 42, height: 42)
+                }
+                .buttonStyle(.plain)
             }
+
             Spacer()
+
             VStack(alignment: .trailing, spacing: 1) {
-                Text(store.config.storeName ?? "التراث بلس").font(AppFont.black(18)).foregroundStyle(StoreTheme.textPrimary)
-                Text(store.config.tagline ?? "متجر التطبيقات").font(AppFont.regular(10.5)).foregroundStyle(StoreTheme.textSecondary).lineLimit(1)
+                Text(store.config.storeName ?? "التراث بلس")
+                    .font(AppFont.black(18))
+                    .foregroundStyle(StoreTheme.textPrimary)
+                Text(store.config.tagline ?? "متجر التطبيقات")
+                    .font(AppFont.regular(10.5))
+                    .foregroundStyle(StoreTheme.textSecondary)
+                    .lineLimit(1)
             }
-        }.frame(height: 56).padding(.horizontal, StoreTheme.pageHorizontal)
-        .sheet(isPresented: $showSettings) { StoreSettingsView().environmentObject(store) }
+        }
+        .frame(height: 56)
+        .padding(.horizontal, StoreTheme.pageHorizontal)
+        .sheet(isPresented: $showSettings) {
+            StoreSettingsView().environmentObject(store)
+        }
+        .sheet(isPresented: $showSigningHub) {
+            SigningHubView()
+                .environmentObject(store)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
     }
 }
 
