@@ -16,11 +16,13 @@ actor AppleAppStoreLookup {
     private var inFlight: [String: Task<AppleAppStoreItem?, Never>] = [:]
 
     func item(bundleID rawBundleID: String) async -> AppleAppStoreItem? {
-        var bundleID = rawBundleID.trimmingCharacters(in: .whitespacesAndNewlines)
-        if bundleID.hasSuffix("Beta") {
-            bundleID = String(bundleID.dropLast(4))
+        var normalizedBundleID = rawBundleID.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalizedBundleID.hasSuffix("Beta") {
+            normalizedBundleID = String(normalizedBundleID.dropLast(4))
         }
-        guard !bundleID.isEmpty else { return nil }
+        guard !normalizedBundleID.isEmpty else { return nil }
+
+        let bundleID = normalizedBundleID
 
         if let cached = cache[bundleID] { return cached }
         if misses.contains(bundleID) { return nil }
