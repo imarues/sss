@@ -86,6 +86,7 @@ struct LiveUpdatesView: View {
             .task { await bootstrap() }
         }
         .navigationViewStyle(.stack)
+        .environment(\.layoutDirection, .rightToLeft)
     }
 
     private var selectedAllApps: [StoreApp] { appsByDay[selectedDay] ?? [] }
@@ -97,16 +98,7 @@ struct LiveUpdatesView: View {
     }
 
     private var titleBlock: some View {
-        HStack {
-            VStack(alignment: .trailing, spacing: 4) {
-                Text("التحديثات")
-                    .font(AppFont.black(27))
-                    .foregroundStyle(StoreTheme.textPrimary)
-                Text("آخر الإضافات والتحديثات من مصادر iKiraPlus")
-                    .font(AppFont.regular(11.5))
-                    .foregroundStyle(StoreTheme.textSecondary)
-            }
-            Spacer()
+        HStack(alignment: .center, spacing: 12) {
             ZStack {
                 Circle().fill(StoreTheme.accent.opacity(0.12))
                 if refreshing {
@@ -118,7 +110,33 @@ struct LiveUpdatesView: View {
                 }
             }
             .frame(width: 52, height: 52)
+
+            Spacer()
+
+            VStack(alignment: .trailing, spacing: 7) {
+                Text("التحديثات والإضافات".storeForcedRTL)
+                    .font(AppFont.black(27))
+                    .foregroundStyle(StoreTheme.textPrimary)
+                    .multilineTextAlignment(.trailing)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+
+                HStack(spacing: 7) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(StoreTheme.badgeNew)
+                    Text("جميع الإضافات والتحديثات خلال هذا الأسبوع".storeForcedRTL)
+                        .font(AppFont.bold(11.5))
+                        .foregroundStyle(StoreTheme.textSecondary)
+                        .multilineTextAlignment(.trailing)
+                }
+                .padding(.horizontal, 10)
+                .frame(height: 28)
+                .background(StoreTheme.badgeNew.opacity(0.08))
+                .clipShape(Capsule())
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            }
         }
+        .environment(\.layoutDirection, .rightToLeft)
         .padding(.horizontal, StoreTheme.pageHorizontal)
     }
 
@@ -147,11 +165,12 @@ struct LiveUpdatesView: View {
             }
             HStack(spacing: 6) {
                 Circle().fill(color).frame(width: 7, height: 7)
-                Text(title)
+                Text(title.storeForcedRTL)
                     .font(AppFont.medium(11.5))
                     .foregroundStyle(StoreTheme.textSecondary)
             }
         }
+        .environment(\.layoutDirection, .rightToLeft)
         .padding(15)
         .frame(maxWidth: .infinity, minHeight: 94, alignment: .trailing)
         .storeCard(radius: 19)
@@ -177,7 +196,7 @@ struct LiveUpdatesView: View {
             withAnimation(.easeInOut(duration: 0.16)) { selectedDay = day.date }
         } label: {
             VStack(spacing: 5) {
-                Text(weekday)
+                Text(weekday.storeForcedRTL)
                     .font(AppFont.medium(9.2))
                     .foregroundStyle(selected ? StoreTheme.onAccent : StoreTheme.textSecondary)
                     .lineLimit(1)
@@ -207,14 +226,15 @@ struct LiveUpdatesView: View {
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 3) {
-                Text(UpdatesViewDateTools.relativeTitle(for: selectedDay))
+                Text(UpdatesViewDateTools.relativeTitle(for: selectedDay).storeForcedRTL)
                     .font(AppFont.black(18))
                     .foregroundStyle(StoreTheme.textPrimary)
-                Text("\(selectedAllApps.count) عنصر")
+                Text("\(selectedAllApps.count) عنصر".storeForcedRTL)
                     .font(AppFont.regular(10.5))
                     .foregroundStyle(StoreTheme.textSecondary)
             }
         }
+        .environment(\.layoutDirection, .rightToLeft)
         .padding(.horizontal, StoreTheme.pageHorizontal)
     }
 
@@ -235,6 +255,7 @@ struct LiveUpdatesView: View {
                             InstallPill(app: app)
                         }
                     }
+                    .environment(\.layoutDirection, .rightToLeft)
                     .padding(.vertical, 10)
 
                     if index < visibleApps.count - 1 {
@@ -265,7 +286,7 @@ struct LiveUpdatesView: View {
     private var loadingCard: some View {
         HStack(spacing: 12) {
             ProgressView().tint(StoreTheme.accent)
-            Text("جاري تجهيز التحديثات…")
+            Text("جاري تجهيز التحديثات…".storeForcedRTL)
                 .font(AppFont.medium(12))
                 .foregroundStyle(StoreTheme.textSecondary)
         }
@@ -282,32 +303,34 @@ struct LiveUpdatesView: View {
                 HStack(spacing: 7) {
                     feedBadge(for: app)
                     Spacer(minLength: 4)
-                    Text(app.name)
+                    Text(app.name.storeForcedRTL)
                         .font(AppFont.bold(14.5))
                         .foregroundStyle(StoreTheme.textPrimary)
                         .lineLimit(1)
                 }
-                Text("الإصدار \(app.version ?? "—")")
+                Text("الإصدار \(app.version ?? "—")".storeForcedRTL)
                     .font(AppFont.regular(11))
                     .foregroundStyle(StoreTheme.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .trailing)
                 if let notes = app.notes, !notes.isEmpty {
-                    Text(notes.replacingOccurrences(of: "\n", with: " "))
+                    Text(notes.replacingOccurrences(of: "\n", with: " ").storeForcedRTL)
                         .font(AppFont.regular(10.5))
                         .foregroundStyle(StoreTheme.textSecondary.opacity(0.88))
                         .lineLimit(1)
+                        .multilineTextAlignment(.trailing)
                         .frame(maxWidth: .infinity, alignment: .trailing)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
         }
+        .environment(\.layoutDirection, .rightToLeft)
         .frame(maxWidth: .infinity)
     }
 
     private func feedBadge(for app: StoreApp) -> some View {
         let isNew = (app.feedKind ?? "").lowercased() == "new"
         let color = isNew ? StoreTheme.badgeNew : StoreTheme.badgeUpdated
-        return Text(isNew ? "جديد" : "تحديث")
+        return Text((isNew ? "جديد" : "تحديث").storeForcedRTL)
             .font(AppFont.bold(9.5))
             .foregroundStyle(color)
             .padding(.horizontal, 8)
@@ -321,12 +344,13 @@ struct LiveUpdatesView: View {
             Image(systemName: "calendar.badge.checkmark")
                 .font(.system(size: 34, weight: .semibold))
                 .foregroundStyle(StoreTheme.accent)
-            Text("لا توجد إضافات أو تحديثات")
+            Text("لا توجد إضافات أو تحديثات".storeForcedRTL)
                 .font(AppFont.bold(14))
                 .foregroundStyle(StoreTheme.textPrimary)
-            Text("ماكو تطبيقات أو ملفات ديلب مسجلة بهذا اليوم")
+            Text("ماكو تطبيقات أو ملفات ديلب مسجلة بهذا اليوم".storeForcedRTL)
                 .font(AppFont.regular(11))
                 .foregroundStyle(StoreTheme.textSecondary)
+                .multilineTextAlignment(.trailing)
         }
         .frame(maxWidth: .infinity)
         .padding(28)
@@ -339,13 +363,13 @@ struct LiveUpdatesView: View {
             Image(systemName: "wifi.exclamationmark")
                 .font(.system(size: 30, weight: .semibold))
                 .foregroundStyle(StoreTheme.badgeUpdated)
-            Text("تعذر تحديث المصادر")
+            Text("تعذر تحديث المصادر".storeForcedRTL)
                 .font(AppFont.bold(14))
                 .foregroundStyle(StoreTheme.textPrimary)
-            Text(message)
+            Text(message.storeForcedRTL)
                 .font(AppFont.regular(10.5))
                 .foregroundStyle(StoreTheme.textSecondary)
-                .multilineTextAlignment(.center)
+                .multilineTextAlignment(.trailing)
                 .lineLimit(3)
             Button("إعادة المحاولة") {
                 Task { await refresh(force: true) }
