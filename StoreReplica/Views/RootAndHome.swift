@@ -124,6 +124,13 @@ struct StoreHeader: View {
     @EnvironmentObject private var store: StoreViewModel
     @State private var showSettings = false
     @State private var showSigningHub = false
+    @ObservedObject private var installer = StoreInstallCoordinator.shared
+    @ObservedObject private var detailCenter = DetailPreparationCenter.shared
+    @ObservedObject private var transfers = TransferActivityCenter.shared
+
+    private var activeTransferCount: Int {
+        transfers.activeCount(using: installer, detail: detailCenter)
+    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -140,15 +147,30 @@ struct StoreHeader: View {
                 .buttonStyle(.plain)
 
                 Button { showSigningHub = true } label: {
-                    ZStack {
-                        Circle().fill(StoreTheme.surface)
-                        Image(systemName: "square.and.arrow.down")
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundStyle(StoreTheme.textPrimary)
+                    ZStack(alignment: .topTrailing) {
+                        ZStack {
+                            Circle().fill(StoreTheme.surface)
+                            Image(systemName: "square.and.arrow.down")
+                                .font(.system(size: 18, weight: .bold))
+                                .foregroundStyle(StoreTheme.textPrimary)
+                        }
+                        .frame(width: 42, height: 42)
+
+                        if activeTransferCount > 0 {
+                            Text(activeTransferCount > 99 ? "99+" : "\(activeTransferCount)")
+                                .font(.system(size: activeTransferCount > 99 ? 7.5 : 9, weight: .bold))
+                                .foregroundStyle(.white)
+                                .frame(minWidth: 18, minHeight: 18)
+                                .padding(.horizontal, activeTransferCount > 9 ? 3 : 0)
+                                .background(Color.red)
+                                .clipShape(Capsule())
+                                .overlay(Capsule().stroke(StoreTheme.background, lineWidth: 2))
+                                .offset(x: 5, y: -5)
+                        }
                     }
-                    .frame(width: 42, height: 42)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(activeTransferCount > 0 ? "التنزيلات، \(activeTransferCount) عمليات جارية" : "التنزيلات")
             }
 
             Spacer()
@@ -169,7 +191,7 @@ struct StoreHeader: View {
             StoreSettingsView().environmentObject(store)
         }
         .sheet(isPresented: $showSigningHub) {
-            SigningHubView()
+            SigningHubView(initialTab: .apps)
                 .environmentObject(store)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
