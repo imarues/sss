@@ -53,6 +53,7 @@ enum BatSignPackagePipeline {
             job: job,
             credentials: credentials
         ) {
+            prewarmGBoxManifest(name: cached.name, bundleID: cached.bundleID, version: cached.version)
             progress?(.packaging, 1)
             return cached
         }
@@ -86,6 +87,14 @@ enum BatSignPackagePipeline {
         }
 
         let metadata = try readMetadata(appURL: appURL, fallback: job)
+
+        // GBox's manifest is remote HTTPS while the payload itself is localhost.
+        // BatSign reaches the official prompt quickly because there is no extra
+        // app-side work after packaging. Warm DNS/TLS and the tiny manifest now,
+        // in parallel with the expensive signing + archive pass, so opening
+        // itms-services at the end does not spend seconds establishing i.gbox.run.
+        prewarmGBoxManifest(name: metadata.name, bundleID: metadata.bundleID, version: metadata.version)
+
         progress?(.signing, 0)
         try BatSignSigner.sign(appURL: appURL, credentials: credentials)
         progress?(.signing, 1)
@@ -98,10 +107,7 @@ enum BatSignPackagePipeline {
 
         do {
             // BatSign's automatic install path explicitly enables
-            // fastestCompressionOverride, which resolves to BestSpeed. It is
-            // the best hand-off tradeoff: only a very light archive pass, but a
-            // meaningfully smaller package for MobileInstallation to pull than
-            // a completely stored archive.
+            // fastestCompressionOverride, which resolves to BestSpeed.
             progress?(.packaging, 0)
             try Zip.zipFiles(
                 paths: [payload],
@@ -218,5 +224,18 @@ enum BatSignPackagePipeline {
         let version = string(["CFBundleShortVersionString", "CFBundleVersion"]) ?? job.version
         guard !bundle.isEmpty else { throw BatSignPackageError.invalidMetadata }
         return (name, bundle, version.isEmpty ? "1.0" : version)
+    }
+
+    private static func prewarmGBoxManifest(name: String, bundleID: String, version: String) {
+        let descriptor = "\(name)/\(bundleID)/\(version)"
+        let base64 = Data(descriptor.utf8).base64EncodedString()
+        let encoded = base64.replacingOccurrences(of: "=", with: "%3D")
+        guard let url = URL(string: "https://i.gbox.run/\(encoded).plist") else { return }
+
+        var request = URLRequest(url: url)
+        request.cachePolicy = .reloadRevalidatingCacheData
+        request.timeoutInterval = 15
+        request.setValue("text/xml,application/xml,*/*;q=0.8", forHTTPHeaderField: "Accept")
+        URLSession.shared.dataTask(with: request) { _, _, _ in }.resume()
     }
 }
