@@ -8,6 +8,8 @@ final class TurathAppDelegate: NSObject, UIApplicationDelegate {
     ) {
         if identifier == DetailPreparationCenter.backgroundSessionIdentifier {
             DetailPreparationCenter.shared.handleBackgroundEvents(completionHandler: completionHandler)
+        } else if identifier == TransferActivityCenter.backgroundSessionIdentifier {
+            TransferActivityCenter.shared.handleBackgroundEvents(completionHandler: completionHandler)
         } else {
             StoreInstallCoordinator.shared.backgroundSessionCompletion = completionHandler
             StoreInstallCoordinator.shared.bootstrap()
