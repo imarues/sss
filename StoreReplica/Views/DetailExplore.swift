@@ -21,16 +21,16 @@ struct AppDetailView: View {
                 turathHero
 
                 detailInfo
-                    .padding(.top, 18)
+                    .padding(.top, 8)
 
                 if let notes = app.notes, !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     notesSection(notes)
-                        .padding(.top, 30)
+                        .padding(.top, 26)
                 }
 
                 if !app.isDylibAsset {
                     applePreviewSection
-                        .padding(.top, 28)
+                        .padding(.top, 26)
                 }
 
                 if !app.isDylibAsset {
@@ -68,12 +68,12 @@ struct AppDetailView: View {
             appleLookupFinished = true
         }
         .sheet(isPresented: $showDuplicate) {
-            DetailPackageActionSheet(app: app, mode: .duplicate)
+            AppCloneSheet(app: app)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.hidden)
         }
         .sheet(isPresented: $showDylib) {
-            DetailPackageActionSheet(app: app, mode: .dylib)
+            AppDylibMergeSheet(app: app)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.hidden)
         }
@@ -87,10 +87,10 @@ struct AppDetailView: View {
                 detailTopBar
                     .padding(.top, 7)
 
-                Spacer().frame(height: 70)
+                Spacer().frame(height: 62)
 
-                AppIconView(app: app, size: 118)
-                    .shadow(color: .black.opacity(0.28), radius: 18, y: 9)
+                AppIconView(app: app, size: 122)
+                    .shadow(color: .black.opacity(0.34), radius: 22, y: 10)
 
                 VStack(spacing: 7) {
                     Text(app.name)
@@ -98,26 +98,27 @@ struct AppDetailView: View {
                         .foregroundStyle(StoreTheme.textPrimary)
                         .multilineTextAlignment(.center)
                         .lineLimit(2)
-                        .minimumScaleFactor(0.82)
+                        .minimumScaleFactor(0.80)
 
                     if let bundle = app.bundleId, !bundle.isEmpty {
                         Text(bundle)
                             .font(.system(size: 11.5, weight: .regular, design: .monospaced))
                             .foregroundStyle(StoreTheme.textSecondary)
                             .lineLimit(1)
+                            .environment(\.layoutDirection, .leftToRight)
                     }
                 }
                 .padding(.horizontal, 24)
-                .padding(.top, 21)
+                .padding(.top, 20)
 
                 if app.isDylibAsset {
                     DirectDownloadButton(app: app)
                         .padding(.horizontal, 16)
-                        .padding(.top, 28)
+                        .padding(.top, 27)
                 } else {
                     TurathDetailInstallButton(app: app)
                         .padding(.horizontal, 16)
-                        .padding(.top, 28)
+                        .padding(.top, 27)
 
                     HStack(spacing: 12) {
                         detailActionButton(
@@ -139,9 +140,9 @@ struct AppDetailView: View {
                     .padding(.top, 12)
                 }
             }
+            .padding(.bottom, 2)
         }
         .frame(maxWidth: .infinity)
-        .frame(minHeight: app.isDylibAsset ? 460 : 525)
         .clipped()
     }
 
@@ -149,29 +150,31 @@ struct AppDetailView: View {
         ZStack {
             StoreTheme.background
 
-            RemoteImage(path: app.iconUrl, cornerRadius: 80)
-                .frame(width: 410, height: 410)
-                .scaleEffect(1.32)
-                .blur(radius: 62)
-                .opacity(0.52)
-                .offset(y: -38)
-
-            RadialGradient(
-                colors: [Color.white.opacity(0.07), Color.clear],
-                center: .top,
-                startRadius: 12,
-                endRadius: 330
-            )
+            RemoteImage(path: app.iconUrl, cornerRadius: 0)
+                .frame(width: UIScreen.main.bounds.width + 130, height: 440)
+                .scaleEffect(1.22)
+                .blur(radius: 58)
+                .saturation(1.32)
+                .opacity(0.62)
+                .offset(y: -50)
 
             LinearGradient(
                 colors: [
-                    Color.black.opacity(0.10),
-                    StoreTheme.background.opacity(0.22),
-                    StoreTheme.background.opacity(0.78),
+                    Color.black.opacity(0.14),
+                    StoreTheme.background.opacity(0.14),
+                    StoreTheme.background.opacity(0.46),
+                    StoreTheme.background.opacity(0.88),
                     StoreTheme.background
                 ],
                 startPoint: .top,
                 endPoint: .bottom
+            )
+
+            RadialGradient(
+                colors: [Color.white.opacity(0.06), .clear],
+                center: .top,
+                startRadius: 8,
+                endRadius: 320
             )
         }
         .ignoresSafeArea(edges: .top)
@@ -183,7 +186,7 @@ struct AppDetailView: View {
                 .font(AppFont.bold(17))
                 .foregroundStyle(StoreTheme.textPrimary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.78)
+                .minimumScaleFactor(0.76)
                 .padding(.horizontal, 126)
 
             HStack(spacing: 10) {
@@ -224,11 +227,11 @@ struct AppDetailView: View {
         }
         .padding(.horizontal, 13)
         .frame(height: 40)
-        .background(StoreTheme.accent.opacity(0.11))
+        .background(StoreTheme.accent.opacity(0.12))
         .clipShape(Capsule())
         .overlay {
             Capsule()
-                .stroke(StoreTheme.accent.opacity(0.10), lineWidth: 0.8)
+                .stroke(StoreTheme.accent.opacity(0.12), lineWidth: 0.8)
         }
         .environment(\.layoutDirection, .rightToLeft)
     }
@@ -239,14 +242,14 @@ struct AppDetailView: View {
                 Text(title)
                     .font(AppFont.black(14))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.78)
+                    .minimumScaleFactor(0.76)
                 Image(systemName: icon)
                     .font(.system(size: 16, weight: .bold))
             }
             .foregroundStyle(StoreTheme.textPrimary)
             .frame(maxWidth: .infinity)
             .frame(height: 54)
-            .background(StoreTheme.surface.opacity(0.86))
+            .background(StoreTheme.surface.opacity(0.90))
             .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
@@ -266,12 +269,12 @@ struct AppDetailView: View {
             metric("الإصدار", app.version ?? "—")
         }
         .environment(\.layoutDirection, .leftToRight)
-        .padding(.vertical, 18)
-        .background(StoreTheme.surface.opacity(0.88))
+        .padding(.vertical, 17)
+        .background(StoreTheme.surface.opacity(0.90))
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(StoreTheme.surfaceBorder.opacity(0.50), lineWidth: 0.7)
+                .stroke(StoreTheme.surfaceBorder.opacity(0.52), lineWidth: 0.7)
         }
         .padding(.horizontal, 16)
     }
@@ -288,7 +291,7 @@ struct AppDetailView: View {
                 .font(AppFont.black(13.5))
                 .foregroundStyle(StoreTheme.textPrimary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.66)
+                .minimumScaleFactor(0.64)
 
             Text(title)
                 .font(AppFont.regular(10.5))
@@ -299,22 +302,30 @@ struct AppDetailView: View {
     }
 
     private func notesSection(_ notes: String) -> some View {
-        VStack(alignment: .trailing, spacing: 15) {
+        VStack(alignment: .trailing, spacing: 14) {
             Text(app.isDylibAsset ? "وصف الملف" : "وصف التطبيق")
                 .font(AppFont.black(20))
                 .foregroundStyle(StoreTheme.textPrimary)
                 .frame(maxWidth: .infinity, alignment: .trailing)
 
-            Text(notes)
+            Text(rtlDescription(notes))
                 .font(AppFont.regular(14))
                 .foregroundStyle(StoreTheme.textSecondary)
                 .lineSpacing(9)
                 .multilineTextAlignment(.trailing)
                 .frame(maxWidth: .infinity, alignment: .trailing)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
         .padding(.horizontal, 18)
         .environment(\.layoutDirection, .rightToLeft)
+    }
+
+    private func rtlDescription(_ value: String) -> String {
+        value
+            .components(separatedBy: "\n")
+            .map { "\u{200F}" + $0 }
+            .joined(separator: "\n")
     }
 
     @ViewBuilder
