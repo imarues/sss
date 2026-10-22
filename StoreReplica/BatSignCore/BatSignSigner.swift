@@ -16,10 +16,16 @@ enum BatSignSignerError: LocalizedError {
 }
 
 enum BatSignSigner {
-    /// Mirrors BatSign's ZsignHandler: both the completion error and the
-    /// boolean return value are authoritative. Some early zsign failures never
-    /// call the completion block, so checking only one of the two is unsafe.
-    static func sign(appURL: URL, credentials: SigningAssetProvider.Credentials) throws {
+    /// Mirrors BatSign's signing-options flow: identity overrides are handed to
+    /// zsign in the same pass that applies the certificate. This avoids a
+    /// separate unzip/rewrite/repack cycle for duplicate installs.
+    static func sign(
+        appURL: URL,
+        credentials: SigningAssetProvider.Credentials,
+        bundleID: String? = nil,
+        displayName: String? = nil,
+        version: String? = nil
+    ) throws {
         var callbackError: Error?
         let signed = Zsign.sign(
             appPath: appURL.path,
@@ -27,9 +33,9 @@ enum BatSignSigner {
             p12Path: credentials.p12.path,
             p12Password: credentials.password,
             entitlementsPath: "",
-            customIdentifier: "",
-            customName: "",
-            customVersion: "",
+            customIdentifier: bundleID ?? "",
+            customName: displayName ?? "",
+            customVersion: version ?? "",
             adhoc: false,
             removeProvision: false,
             completion: { _, error in
