@@ -35,6 +35,7 @@ struct TurathReplicaApp: App {
                     }
                 }
                 .task {
+                    InstallLiveActivityBridge.cleanupStale()
                     StoreInstallCoordinator.shared.bootstrap()
                     await KiraPagesUpdatesService.shared.warm()
                 }
