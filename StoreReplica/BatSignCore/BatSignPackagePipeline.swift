@@ -24,6 +24,12 @@ enum BatSignPackageError: LocalizedError {
     }
 }
 
+enum BatSignPackageStage {
+    case unpacking
+    case signing
+    case packaging
+}
+
 struct BatSignPackageArtifact {
     let ipaURL: URL
     let name: String
@@ -38,15 +44,16 @@ enum BatSignPackagePipeline {
         ipaURL: URL,
         job: StoreInstallJob,
         credentials: SigningAssetProvider.Credentials,
-        outputURL: URL
+        outputURL: URL,
+        progress: ((BatSignPackageStage, Double) -> Void)? = nil
     ) throws -> BatSignPackageArtifact {
-        // A package that was already sealed with this exact P12 + provision and
-        // app version does not need Zsign or another archive pass. Materialize a
-        // disposable hard-link and hand it straight to the localhost installer.
+        // A package already sealed with this exact certificate/profile/version
+        // skips every expensive pass, just like BatSign reusing a signed entry.
         if let cached = BatSignSignedCache.materializeForInstall(
             job: job,
             credentials: credentials
         ) {
+            progress?(.packaging, 1)
             return cached
         }
 
@@ -57,14 +64,16 @@ enum BatSignPackagePipeline {
         defer { try? fm.removeItem(at: root) }
 
         do {
+            progress?(.unpacking, 0)
             Zip.addCustomFileExtension("ipa")
             try Zip.unzipFile(
                 ipaURL,
                 destination: root,
                 overwrite: true,
                 password: nil,
-                progress: nil
+                progress: { value in progress?(.unpacking, value) }
             )
+            progress?(.unpacking, 1)
         } catch {
             throw BatSignPackageError.unreadablePackage
         }
@@ -77,7 +86,9 @@ enum BatSignPackagePipeline {
         }
 
         let metadata = try readMetadata(appURL: appURL, fallback: job)
+        progress?(.signing, 0)
         try BatSignSigner.sign(appURL: appURL, credentials: credentials)
+        progress?(.signing, 1)
 
         let zipURL = outputURL
             .deletingPathExtension()
@@ -86,14 +97,21 @@ enum BatSignPackagePipeline {
         try? fm.removeItem(at: outputURL)
 
         do {
+            // BatSign's automatic install path explicitly enables
+            // fastestCompressionOverride, which resolves to BestSpeed. It is
+            // the best hand-off tradeoff: only a very light archive pass, but a
+            // meaningfully smaller package for MobileInstallation to pull than
+            // a completely stored archive.
+            progress?(.packaging, 0)
             try Zip.zipFiles(
                 paths: [payload],
                 zipFilePath: zipURL,
                 password: nil,
-                compression: .NoCompression,
-                progress: nil
+                compression: .BestSpeed,
+                progress: { value in progress?(.packaging, value) }
             )
             try fm.moveItem(at: zipURL, to: outputURL)
+            progress?(.packaging, 1)
         } catch {
             try? fm.removeItem(at: zipURL)
             try? fm.removeItem(at: outputURL)
@@ -107,8 +125,6 @@ enum BatSignPackagePipeline {
             version: metadata.version
         )
 
-        // Best effort. A cache failure must never turn a successful signature
-        // into a failed installation.
         try? BatSignSignedCache.store(
             artifact: artifact,
             job: job,
