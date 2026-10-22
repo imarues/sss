@@ -1,13 +1,17 @@
 import Foundation
 import Network
 
-/// Local GBox-compatible payload server. The listener stays alive in the
-/// background until MobileInstallation has actually fetched every byte.
+/// GBox-compatible localhost payload server.
+///
+/// BatSign starts port 9800 before the package archive is ready, then only
+/// swaps in the finished package URL. Doing the same removes listener startup
+/// from the critical path between "signed" and the official iOS prompt.
 final class BatSignLoopbackIPAInstallServer {
-    private let fileURL: URL
     private let queue = DispatchQueue(label: "com.ikiraplus.turath.batsign-server", qos: .userInitiated)
     private let keepAliveReason = "installer-\(UUID().uuidString)"
+    private let packageLock = NSLock()
 
+    private var _fileURL: URL?
     private var listener: NWListener?
     private var stopped = false
     private var reportedStart = false
@@ -18,8 +22,22 @@ final class BatSignLoopbackIPAInstallServer {
     private var onTransferComplete: (() -> Void)?
     private var onFailure: ((Error) -> Void)?
 
-    init(fileURL: URL) throws {
-        self.fileURL = fileURL
+    /// May be assigned after the listener is already ready. This is how
+    /// BatSign's ServerInstaller behaves with packageUrl.
+    var fileURL: URL? {
+        get {
+            packageLock.lock(); defer { packageLock.unlock() }
+            return _fileURL
+        }
+        set {
+            packageLock.lock()
+            _fileURL = newValue
+            packageLock.unlock()
+        }
+    }
+
+    init(fileURL: URL? = nil) throws {
+        self._fileURL = fileURL
         guard let loopback = IPv4Address("127.0.0.1") else {
             throw NSError(
                 domain: "Turath.BatSignServer",
@@ -55,10 +73,6 @@ final class BatSignLoopbackIPAInstallServer {
         self.onTransferStarted = onTransferStarted
         self.onTransferComplete = onTransferComplete
         self.onFailure = onFailure
-
-        // BatSign keeps the process scheduled for the complete hand-off. A
-        // short UIBackgroundTask alone expires while installd is still deciding
-        // when to fetch localhost.
         StoreInstallKeepAlive.shared.begin(keepAliveReason)
 
         listener.newConnectionHandler = { [weak self] connection in
@@ -68,17 +82,7 @@ final class BatSignLoopbackIPAInstallServer {
             guard let self else { return }
             switch state {
             case .ready:
-                // The listener is genuinely accepting 127.0.0.1:9800 now.
-                // Mark the hand-off active before opening itms-services so the
-                // legacy 60-second watchdog cannot cancel a valid delayed
-                // MobileInstallation fetch. Completion is still reported only
-                // after the entire IPA has been delivered.
-                let shouldReportStart = !self.reportedStart
-                self.reportedStart = true
-                DispatchQueue.main.async {
-                    onReady()
-                    if shouldReportStart { onTransferStarted() }
-                }
+                DispatchQueue.main.async(execute: onReady)
             case .failed(let error):
                 self.reportFailure(error)
             default:
@@ -97,6 +101,7 @@ final class BatSignLoopbackIPAInstallServer {
         onTransferStarted = nil
         onTransferComplete = nil
         deliveredRanges.removeAll()
+        fileURL = nil
         StoreInstallKeepAlive.shared.end(keepAliveReason)
     }
 
@@ -156,7 +161,15 @@ final class BatSignLoopbackIPAInstallServer {
     }
 
     private func serveIPA(_ connection: NWConnection, method: String, request: String) {
-        let size = fileSize()
+        guard let package = fileURL else {
+            // The listener is intentionally allowed to exist before packaging
+            // finishes. A fetch cannot normally arrive before itms-services is
+            // opened, but answer honestly if one does.
+            sendText(connection, status: "503 Service Unavailable", body: "Package not ready")
+            return
+        }
+
+        let size = fileSize(package)
         guard size > 0 else {
             sendText(connection, status: "404 Not Found", body: "Missing IPA")
             return
@@ -185,16 +198,21 @@ final class BatSignLoopbackIPAInstallServer {
         if partial { header += "Content-Range: bytes \(start)-\(end)/\(size)\r\n" }
         header += "Connection: close\r\n\r\n"
 
+        if method == "GET", !reportedStart {
+            reportedStart = true
+            DispatchQueue.main.async { [weak self] in self?.onTransferStarted?() }
+        }
+
         connection.send(content: Data(header.utf8), completion: .contentProcessed { [weak self] error in
             guard let self else { connection.cancel(); return }
             guard error == nil else { connection.cancel(); return }
             if method == "HEAD" { connection.cancel(); return }
-            self.stream(connection, start: start, end: end, totalSize: size)
+            self.stream(connection, package: package, start: start, end: end, totalSize: size)
         })
     }
 
-    private func stream(_ connection: NWConnection, start: Int64, end: Int64, totalSize: Int64) {
-        guard let handle = try? FileHandle(forReadingFrom: fileURL) else {
+    private func stream(_ connection: NWConnection, package: URL, start: Int64, end: Int64, totalSize: Int64) {
+        guard let handle = try? FileHandle(forReadingFrom: package) else {
             reportFailure(NSError(
                 domain: "Turath.BatSignServer",
                 code: 3,
@@ -213,7 +231,7 @@ final class BatSignLoopbackIPAInstallServer {
                 self.recordDeliveredRange(start: start, end: end, totalSize: totalSize)
                 return
             }
-            let count = Int(min(left, 512 * 1024))
+            let count = Int(min(left, 1024 * 1024))
             let data = handle.readData(ofLength: count)
             guard !data.isEmpty else {
                 try? handle.close()
@@ -233,8 +251,6 @@ final class BatSignLoopbackIPAInstallServer {
         pump()
     }
 
-    /// MobileInstallation can fetch the file in one request or several byte
-    /// ranges. Only declare success when completed ranges cover the entire IPA.
     private func recordDeliveredRange(start: Int64, end: Int64, totalSize: Int64) {
         guard !reportedComplete, start >= 0, end >= start, totalSize > 0 else { return }
         deliveredRanges.append((start, end))
@@ -256,9 +272,7 @@ final class BatSignLoopbackIPAInstallServer {
               only.1 >= totalSize - 1 else { return }
 
         reportedComplete = true
-        DispatchQueue.main.async { [weak self] in
-            self?.onTransferComplete?()
-        }
+        DispatchQueue.main.async { [weak self] in self?.onTransferComplete?() }
     }
 
     private func parseRange(_ request: String, size: Int64) -> (Int64, Int64)? {
@@ -292,8 +306,8 @@ final class BatSignLoopbackIPAInstallServer {
         return (start, end)
     }
 
-    private func fileSize() -> Int64 {
-        let attrs = try? FileManager.default.attributesOfItem(atPath: fileURL.path)
+    private func fileSize(_ url: URL) -> Int64 {
+        let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
         return (attrs?[.size] as? NSNumber)?.int64Value ?? 0
     }
 
