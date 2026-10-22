@@ -225,6 +225,28 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
     func applicationDidBecomeActive() {
         StoreInstallKeepAlive.shared.reaffirm()
 
+        // UIApplication.open reports success when iOS presents its confirmation
+        // sheet, not when the user actually accepts installation. If the app
+        // becomes active again and the loopback server has not seen the IPA
+        // transfer begin, the confirmation was dismissed/cancelled. Return the
+        // item to Ready instead of leaving the UI spinning at 100%.
+        if handOffAccepted,
+           let job = pendingInstallJob,
+           !installTransferStarted {
+            let jobID = job.id
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
+                guard let self,
+                      self.pendingInstallJob?.id == jobID,
+                      self.handOffAccepted,
+                      !self.installTransferStarted else { return }
+                self.finishInstallAttemptAsReady(
+                    job,
+                    message: "تم إلغاء تأكيد التثبيت. الملف محفوظ وجاهز لإعادة المحاولة."
+                )
+            }
+            return
+        }
+
         // If iOS explicitly refused an earlier background ask, foregrounding is
         // a free moment to offer it again. Never repeat an accepted request.
         guard !handOffAccepted,
