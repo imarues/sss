@@ -33,7 +33,7 @@ jobs:
       - name: Build unsigned device app
         run: |
           set -o pipefail
-          xcodebuild \
+          if ! xcodebuild \
             -project TurathReplica.xcodeproj \
             -scheme TurathReplica \
             -configuration Release \
@@ -42,7 +42,13 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            build
+            build > build.log 2>&1; then
+            echo "===== XCODE ERRORS ====="
+            grep -n -E "error:|fatal error:" build.log | tail -120 || true
+            echo "===== BUILD TAIL ====="
+            tail -120 build.log
+            exit 1
+          fi
 
       - name: Package unsigned IPA
         run: |
