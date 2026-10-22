@@ -137,25 +137,26 @@ struct SearchFastView: View {
             }
         }
         .navigationViewStyle(.stack)
+        .environment(\.layoutDirection, .rightToLeft)
     }
 
     private var hero: some View {
-        VStack(alignment: .trailing, spacing: 9) {
-            HStack {
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text("ابحث في كيرا بلس")
-                        .font(AppFont.black(26))
-                        .foregroundStyle(.white)
-                    Text("\(sourceCount.formatted()) عنصر من IPA-AR و deb-AR")
-                        .font(AppFont.regular(12))
-                        .foregroundStyle(.white.opacity(0.72))
-                }
-                Spacer()
-                Image(systemName: "magnifyingglass.circle.fill")
-                    .font(.system(size: 58))
-                    .foregroundStyle(.white.opacity(0.88))
+        HStack {
+            Image(systemName: "magnifyingglass.circle.fill")
+                .font(.system(size: 58))
+                .foregroundStyle(.white.opacity(0.88))
+            Spacer()
+            VStack(alignment: .trailing, spacing: 4) {
+                Text("ابحث في كيرا بلس".storeForcedRTL)
+                    .font(AppFont.black(26))
+                    .foregroundStyle(.white)
+                Text("\(sourceCount.formatted()) عنصر من IPA-AR و deb-AR".storeForcedRTL)
+                    .font(AppFont.regular(12))
+                    .foregroundStyle(.white.opacity(0.72))
+                    .multilineTextAlignment(.trailing)
             }
         }
+        .environment(\.layoutDirection, .rightToLeft)
         .padding(19)
         .background(
             LinearGradient(
@@ -170,18 +171,6 @@ struct SearchFastView: View {
 
     private var searchField: some View {
         HStack(spacing: 10) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(StoreTheme.textSecondary)
-
-            TextField("اسم التطبيق أو اللعبة أو الديلب", text: $query)
-                .focused($searchFocused)
-                .font(AppFont.regular(14))
-                .foregroundStyle(StoreTheme.textPrimary)
-                .multilineTextAlignment(.trailing)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled(true)
-                .submitLabel(.search)
-
             if searching {
                 ProgressView()
                     .tint(StoreTheme.accent)
@@ -197,7 +186,20 @@ struct SearchFastView: View {
                 }
                 .buttonStyle(.plain)
             }
+
+            TextField("اسم التطبيق أو اللعبة أو الديلب", text: $query)
+                .focused($searchFocused)
+                .font(AppFont.regular(14))
+                .foregroundStyle(StoreTheme.textPrimary)
+                .multilineTextAlignment(.trailing)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled(true)
+                .submitLabel(.search)
+
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(StoreTheme.textSecondary)
         }
+        .environment(\.layoutDirection, .rightToLeft)
         .padding(.horizontal, 14)
         .frame(height: 50)
         .background(StoreTheme.field)
@@ -211,9 +213,10 @@ struct SearchFastView: View {
         VStack(spacing: 14) {
             SectionTitle(title: "التصنيفات")
             if sourceTags.isEmpty {
-                Text("ابدأ بالبحث عن اسم تطبيق أو لعبة أو ديلب")
+                Text("ابدأ بالبحث عن اسم تطبيق أو لعبة أو ديلب".storeForcedRTL)
                     .font(AppFont.regular(12))
                     .foregroundStyle(StoreTheme.textSecondary)
+                    .multilineTextAlignment(.trailing)
                     .frame(maxWidth: .infinity, alignment: .trailing)
                     .padding(.horizontal, StoreTheme.pageHorizontal)
             } else {
@@ -232,7 +235,7 @@ struct SearchFastView: View {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 30, weight: .semibold))
                         .foregroundStyle(StoreTheme.textSecondary)
-                    Text("ماكو نتائج")
+                    Text("ماكو نتائج".storeForcedRTL)
                         .font(AppFont.bold(13))
                         .foregroundStyle(StoreTheme.textPrimary)
                 }
@@ -245,14 +248,17 @@ struct SearchFastView: View {
                             HStack(spacing: 12) {
                                 AppIconView(app: app, size: 62)
                                 VStack(alignment: .trailing, spacing: 5) {
-                                    Text(app.name)
+                                    Text(app.name.storeForcedRTL)
                                         .font(AppFont.bold(15))
                                         .foregroundStyle(StoreTheme.textPrimary)
                                         .lineLimit(1)
-                                    Text(app.notes ?? "الإصدار \(app.version ?? "—")")
+                                        .frame(maxWidth: .infinity, alignment: .trailing)
+                                    Text((app.notes ?? "الإصدار \(app.version ?? "—")").storeForcedRTL)
                                         .font(AppFont.regular(11.5))
                                         .foregroundStyle(StoreTheme.textSecondary)
                                         .lineLimit(2)
+                                        .multilineTextAlignment(.trailing)
+                                        .frame(maxWidth: .infinity, alignment: .trailing)
                                 }
                                 .frame(maxWidth: .infinity, alignment: .trailing)
                             }
@@ -265,6 +271,7 @@ struct SearchFastView: View {
                             InstallPill(app: app)
                         }
                     }
+                    .environment(\.layoutDirection, .rightToLeft)
                     .padding(.vertical, 10)
 
                     if index < results.count - 1 {
@@ -281,7 +288,7 @@ struct SearchFastView: View {
     private var loadingCard: some View {
         HStack(spacing: 10) {
             ProgressView().tint(StoreTheme.accent)
-            Text("جاري تجهيز البحث…")
+            Text("جاري تجهيز البحث…".storeForcedRTL)
                 .font(AppFont.medium(12))
                 .foregroundStyle(StoreTheme.textSecondary)
         }
@@ -296,13 +303,14 @@ struct SearchFastView: View {
             Image(systemName: "wifi.exclamationmark")
                 .font(.system(size: 28, weight: .semibold))
                 .foregroundStyle(StoreTheme.badgeUpdated)
-            Text("تعذر تحميل مصادر البحث")
+            Text("تعذر تحميل مصادر البحث".storeForcedRTL)
                 .font(AppFont.bold(13))
                 .foregroundStyle(StoreTheme.textPrimary)
-            Text(text)
+            Text(text.storeForcedRTL)
                 .font(AppFont.regular(10.5))
                 .foregroundStyle(StoreTheme.textSecondary)
-                .multilineTextAlignment(.center)
+                .multilineTextAlignment(.trailing)
+                .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .frame(maxWidth: .infinity)
         .padding(24)
