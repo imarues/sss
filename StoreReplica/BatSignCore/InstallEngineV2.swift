@@ -44,7 +44,7 @@ enum StoreInstallError: LocalizedError {
         case .httpStatus(let status):
             return "فشل تحميل التطبيق من الخادم (HTTP \(status))."
         case .installerRejected:
-            return "تعذر فتح مثبت iOS عبر GBox. التطبيق محفوظ ويمكن إعادة المحاولة."
+            return "تعذر تسليم طلب التثبيت إلى iOS. التطبيق محفوظ ويمكن إعادة المحاولة."
         case .installerTimedOut:
             return "لم يبدأ iOS باستلام التطبيق. التطبيق محفوظ ويمكن إعادة المحاولة بدون تنزيله."
         case .stalePackage:
@@ -65,6 +65,10 @@ final class StoreInstallAppDelegate: NSObject, UIApplicationDelegate {
     func applicationDidBecomeActive(_ application: UIApplication) {
         StoreInstallCoordinator.shared.applicationDidBecomeActive()
     }
+
+    func applicationDidEnterBackground(_ application: UIApplication) {
+        StoreInstallKeepAlive.shared.reaffirm()
+    }
 }
 
 final class StoreInstallCoordinator: NSObject, ObservableObject {
@@ -83,12 +87,24 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
     private let signingQueue = DispatchQueue(label: "com.ikiraplus.turath.batsign.signing", qos: .userInitiated)
     private let exportQueue = DispatchQueue(label: "com.ikiraplus.turath.batsign.export", qos: .utility)
 
+    // BatSign keeps the server alive before the install package exists. The
+    // finished archive is assigned to it at the last possible moment.
     private var installerServer: BatSignLoopbackIPAInstallServer?
+    private var installerServerReady = false
     private var pendingInstallJob: StoreInstallJob?
+    private var pendingArtifact: BatSignPackageArtifact?
     private var pendingSignedIPA: URL?
-    private var pendingOpenURL: URL?
+    private var pendingOriginalIPA: URL?
     private var installTransferStarted = false
-    private var installTimeout: DispatchWorkItem?
+
+    // UIApplication.open only tells us whether the system accepted the ask.
+    // BatSign retries only refused asks; accepted asks are never duplicated.
+    private var pendingHandOffURL: URL?
+    private var handOffAccepted = false
+    private var handOffAttempts = 0
+    private var handOffRetry: DispatchWorkItem?
+    private var handOffStallTimeout: DispatchWorkItem?
+
     private var bootstrapped = false
 
     private lazy var session: URLSession = {
@@ -207,12 +223,15 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
     }
 
     func applicationDidBecomeActive() {
-        // Legacy safety retry only. The primary path now mirrors BatSign and
-        // opens itms-services immediately even while the app is transitioning
-        // to the background/Home Screen.
-        guard let url = pendingOpenURL, let job = pendingInstallJob else { return }
-        pendingOpenURL = nil
-        openInstallURL(url, job: job)
+        StoreInstallKeepAlive.shared.reaffirm()
+
+        // If iOS explicitly refused an earlier background ask, foregrounding is
+        // a free moment to offer it again. Never repeat an accepted request.
+        guard !handOffAccepted,
+              let url = pendingHandOffURL,
+              let job = pendingInstallJob,
+              !installTransferStarted else { return }
+        offerInstallURL(url, job: job)
     }
 
     private func beginDownload(_ job: StoreInstallJob) {
@@ -278,19 +297,21 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
     private func handleFinishedDownload(_ temporaryURL: URL, jobID: String) {
         guard let job = job(jobID) else { return }
 
+        // BatSign treats transfer + unpacking as one progress journey. Do not
+        // park the UI at a fake final 100% before the package has been adopted.
         publish(
             appID: job.appID,
             state: StoreInstallState(
-                phase: .signing,
-                progress: 0.91,
-                message: "جاري تجهيز التطبيق للتوقيع"
+                phase: .downloading,
+                progress: 0.64,
+                message: "جاري تجهيز الحزمة"
             )
         )
         InstallLiveActivityBridge.update(
             job: job,
-            phase: .signing,
-            progress: 0.91,
-            detail: "جاري تجهيز التطبيق للتوقيع",
+            phase: .downloading,
+            progress: 0.64,
+            detail: "جاري تجهيز الحزمة",
             force: true
         )
 
@@ -321,7 +342,7 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
             appID: job.appID,
             state: StoreInstallState(
                 phase: .downloading,
-                progress: 0.90,
+                progress: 0.63,
                 message: "جاري استعادة ملف التحميل"
             )
         )
@@ -339,79 +360,65 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
     }
 
     private func beginSigning(job: StoreInstallJob, stagedIPA: URL, startLiveActivity: Bool) {
-        publish(
-            appID: job.appID,
-            state: StoreInstallState(phase: .signing, progress: 0.92, message: "جاري التوقيع")
-        )
         if startLiveActivity { InstallLiveActivityBridge.begin(job: job) }
-        InstallLiveActivityBridge.update(
-            job: job,
-            phase: .signing,
-            progress: 0.92,
-            detail: "جاري التوقيع",
-            force: true
-        )
 
-        // BatSign keeps in-process signing alive when the user is already on the
-        // Home Screen. The installer takes its own hold before this one ends.
+        // Exactly like BatSign's ServerInstaller: bind 9800 before archive work
+        // begins. When the archive becomes ready there is no server startup on
+        // the critical path to the official confirmation.
+        let prewarm = {
+            self.prepareInstallServer(job: job, originalIPA: stagedIPA)
+        }
+        if Thread.isMainThread { prewarm() }
+        else { DispatchQueue.main.sync(execute: prewarm) }
+
         StoreInstallKeepAlive.shared.begin("signing-\(job.id)")
-
         signingQueue.async { [weak self] in
             self?.signThenInstall(job: job, stagedIPA: stagedIPA)
         }
     }
 
     private func signThenInstall(job: StoreInstallJob, stagedIPA: URL) {
-        var backgroundID: UIBackgroundTaskIdentifier = .invalid
-        DispatchQueue.main.sync {
-            backgroundID = UIApplication.shared.beginBackgroundTask(withName: "TurathBatSign") {
-                if backgroundID != .invalid {
-                    UIApplication.shared.endBackgroundTask(backgroundID)
-                    backgroundID = .invalid
-                }
-            }
-        }
-
-        defer {
-            DispatchQueue.main.async {
-                if backgroundID != .invalid { UIApplication.shared.endBackgroundTask(backgroundID) }
-            }
-        }
-
         do {
             let credentials = try SigningAssetProvider.credentials()
             try SigningAssetProvider.validate(credentials: credentials)
             let output = try signedFileURL(job)
+
             let artifact = try BatSignPackagePipeline.sign(
                 ipaURL: stagedIPA,
                 job: job,
                 credentials: credentials,
-                outputURL: output
+                outputURL: output,
+                progress: { [weak self] stage, value in
+                    self?.publishPackageProgress(job: job, stage: stage, value: value)
+                }
             )
 
             DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
+                guard let self, self.pendingInstallJob?.id == job.id else { return }
+                self.pendingArtifact = artifact
+                self.pendingSignedIPA = artifact.ipaURL
+                self.installerServer?.fileURL = artifact.ipaURL
+
                 self.publish(
                     appID: job.appID,
                     state: StoreInstallState(
                         phase: .installing,
-                        progress: 0.98,
+                        progress: 0.99,
                         message: "جاري فتح مثبت iOS"
                     )
                 )
                 InstallLiveActivityBridge.update(
                     job: job,
                     phase: .installing,
-                    progress: 0.98,
+                    progress: 0.99,
                     detail: "جاري فتح مثبت iOS",
                     force: true
                 )
 
-                // Start the localhost hand-off first. Its keep-alive hold is
-                // acquired synchronously by start(), so there is no suspension
-                // gap when the signing hold is released below.
-                self.startInstallServer(job: job, artifact: artifact, originalIPA: stagedIPA)
+                // The server's hold has been active since beginSigning, so the
+                // signing hold can end with no suspendable gap.
                 StoreInstallKeepAlive.shared.end("signing-\(job.id)")
+                self.offerInstallIfReady(job: job)
             }
         } catch let error as BatSignPackageError {
             StoreInstallKeepAlive.shared.end("signing-\(job.id)")
@@ -422,78 +429,86 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
         }
     }
 
-    private func retryCorruptPackageIfNeeded(job: StoreInstallJob, stagedIPA: URL, error: Error) {
-        lock.lock()
-        let attempts = corruptRetries[job.appID] ?? 0
-        corruptRetries[job.appID] = attempts + 1
-        lock.unlock()
-
-        guard attempts == 0, !job.downloadURL.isEmpty else {
-            fail(job: job, error: error)
-            return
-        }
-
-        try? FileManager.default.removeItem(at: stagedIPA)
-        publish(
-            appID: job.appID,
-            state: StoreInstallState(
-                phase: .downloading,
-                progress: 0,
-                message: "النسخة المحفوظة غير سليمة · جاري تنزيلها من جديد"
+    private func publishPackageProgress(job: StoreInstallJob, stage: BatSignPackageStage, value: Double) {
+        let p = max(0, min(1, value))
+        switch stage {
+        case .unpacking:
+            // BatSign's Download.overallProgress gives transfer 70% and
+            // unpacking 30%. Our pill expects download progress in 0...0.90,
+            // so the equivalent visible range is roughly 70...100%.
+            let raw = 0.63 + (0.27 * p)
+            publish(
+                appID: job.appID,
+                state: StoreInstallState(phase: .downloading, progress: raw, message: "جاري فك الحزمة")
             )
-        )
-        beginDownload(job)
+            InstallLiveActivityBridge.update(
+                job: job,
+                phase: .downloading,
+                progress: raw,
+                detail: "جاري فك الحزمة",
+                force: false
+            )
+        case .signing:
+            publish(
+                appID: job.appID,
+                state: StoreInstallState(phase: .signing, progress: 0.93, message: "جاري التوقيع")
+            )
+            InstallLiveActivityBridge.update(
+                job: job,
+                phase: .signing,
+                progress: 0.93,
+                detail: "جاري التوقيع",
+                force: p >= 1
+            )
+        case .packaging:
+            publish(
+                appID: job.appID,
+                state: StoreInstallState(phase: .signing, progress: 0.95 + (0.03 * p), message: "جاري تجهيز IPA")
+            )
+            InstallLiveActivityBridge.update(
+                job: job,
+                phase: .signing,
+                progress: 0.95 + (0.03 * p),
+                detail: "جاري تجهيز IPA",
+                force: false
+            )
+        }
     }
 
-    private func startInstallServer(
-        job: StoreInstallJob,
-        artifact: BatSignPackageArtifact,
-        originalIPA: URL
-    ) {
+    private func prepareInstallServer(job: StoreInstallJob, originalIPA: URL) {
         cleanupInstallAttempt(deleteSigned: true)
         pendingInstallJob = job
-        pendingSignedIPA = artifact.ipaURL
+        pendingOriginalIPA = originalIPA
+        pendingArtifact = nil
+        pendingSignedIPA = nil
+        installerServerReady = false
         installTransferStarted = false
+        pendingHandOffURL = nil
+        handOffAccepted = false
+        handOffAttempts = 0
 
         do {
-            let server = try BatSignLoopbackIPAInstallServer(fileURL: artifact.ipaURL)
+            let server = try BatSignLoopbackIPAInstallServer()
             installerServer = server
             server.start(
                 onReady: { [weak self] in
-                    guard let self else { return }
-                    guard let manifest = Self.gboxManifestURL(artifact),
-                          let itms = Self.itmsURL(manifest) else {
-                        self.fail(job: job, error: StoreInstallError.installerRejected)
-                        return
-                    }
-
-                    self.publish(
-                        appID: job.appID,
-                        state: StoreInstallState(
-                            phase: .installing,
-                            progress: 0.99,
-                            message: "بانتظار تأكيد التثبيت"
-                        )
-                    )
-
-                    // This is intentionally unconditional. BatSign does not
-                    // wait for applicationState == .active; delaying here is
-                    // exactly what caused the long spinner while the user was
-                    // looking at the Dynamic Island/Home Screen.
-                    self.pendingOpenURL = nil
-                    self.openInstallURL(itms, job: job, originalIPA: originalIPA)
+                    guard let self, self.pendingInstallJob?.id == job.id else { return }
+                    self.installerServerReady = true
+                    self.offerInstallIfReady(job: job)
                 },
                 onTransferStarted: { [weak self] in
                     guard let self, self.pendingInstallJob?.id == job.id else { return }
                     self.installTransferStarted = true
-                    self.installTimeout?.cancel()
-                    self.installTimeout = nil
+                    self.handOffRetry?.cancel()
+                    self.handOffRetry = nil
+                    self.handOffStallTimeout?.cancel()
+                    self.handOffStallTimeout = nil
                     self.publish(
                         appID: job.appID,
                         state: StoreInstallState(
                             phase: .installing,
-                            progress: 0.99,
-                            message: "جاري إرسال التطبيق إلى مثبت iOS"
+                            progress: 0.995,
+                            message: "جاري إرسال التطبيق إلى iOS"
                         )
                     )
                 },
@@ -514,36 +529,132 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
         }
     }
 
-    private func openInstallURL(_ url: URL, job: StoreInstallJob, originalIPA: URL? = nil) {
+    private func offerInstallIfReady(job: StoreInstallJob) {
+        guard pendingInstallJob?.id == job.id,
+              installerServerReady,
+              let artifact = pendingArtifact,
+              installerServer?.fileURL != nil else { return }
+
+        guard let manifest = Self.gboxManifestURL(artifact),
+              let itms = Self.itmsURL(manifest) else {
+            fail(job: job, error: StoreInstallError.installerRejected)
+            return
+        }
+
+        // Only one initial ask. A second ask is legal only when iOS explicitly
+        // declined the previous UIApplication.open call.
+        if pendingHandOffURL == nil {
+            pendingHandOffURL = itms
+            offerInstallURL(itms, job: job)
+        }
+    }
+
+    private func offerInstallURL(_ url: URL, job: StoreInstallJob) {
+        guard pendingInstallJob?.id == job.id, !installTransferStarted else { return }
+        if handOffAccepted { return }
+
+        handOffRetry?.cancel()
+        handOffRetry = nil
+        handOffAttempts += 1
+
         UIApplication.shared.open(url, options: [:]) { [weak self] accepted in
             guard let self, self.pendingInstallJob?.id == job.id else { return }
-            guard accepted else {
-                self.fail(job: job, error: StoreInstallError.installerRejected)
+            self.handOffAccepted = accepted
+
+            if accepted {
+                self.publish(
+                    appID: job.appID,
+                    state: StoreInstallState(
+                        phase: .installing,
+                        progress: 1,
+                        message: "بانتظار تأكيد iOS"
+                    )
+                )
+
+                // Files export is deliberately delayed until after the system
+                // has taken the prompt request, so it cannot steal disk I/O
+                // from signing/packaging/handoff.
+                if let original = self.pendingOriginalIPA {
+                    self.exportQueue.asyncAfter(deadline: .now() + 6) {
+                        _ = StoreDownloadStorage.exportToFiles(stagedURL: original, job: job)
+                    }
+                }
+
+                // Cancellation of Apple's confirmation is not reported to us.
+                // Keep the server standing for a generous window, then return
+                // the row to Ready rather than spin forever.
+                self.scheduleAcceptedHandOffSafety(job: job)
                 return
             }
 
-            // Do not compete with the hand-off for disk I/O. The user's Files
-            // copy is best-effort and starts only after the system has already
-            // been asked to present the official confirmation.
-            if let originalIPA {
-                self.exportQueue.asyncAfter(deadline: .now() + 8) {
-                    _ = StoreDownloadStorage.exportToFiles(stagedURL: originalIPA, job: job)
-                }
-            }
-
-            let timeout = DispatchWorkItem { [weak self] in
-                guard let self,
-                      self.pendingInstallJob?.id == job.id,
-                      !self.installTransferStarted else { return }
-                self.finishInstallAttemptAsReady(
-                    job,
-                    message: "لم يبدأ مثبت iOS باستلام التطبيق. الملف محفوظ وجاهز لإعادة المحاولة."
-                )
-            }
-            self.installTimeout?.cancel()
-            self.installTimeout = timeout
-            DispatchQueue.main.asyncAfter(deadline: .now() + 180, execute: timeout)
+            self.scheduleRefusedHandOffRetry(url: url, job: job)
         }
+    }
+
+    private func scheduleRefusedHandOffRetry(url: URL, job: StoreInstallJob) {
+        guard pendingInstallJob?.id == job.id, !handOffAccepted, !installTransferStarted else { return }
+
+        // BatSign retries a refused hand-off, but never one the system already
+        // accepted. Front-load the first retries so the official confirmation
+        // normally arrives within a few seconds.
+        let delays: [TimeInterval] = [0.8, 1.2, 2.0, 3.0, 5.0, 8.0]
+        let index = max(0, handOffAttempts - 1)
+        guard index < delays.count else {
+            finishInstallAttemptAsReady(
+                job,
+                message: "iOS لم يقبل طلب التثبيت. الملف محفوظ وجاهز لإعادة المحاولة."
+            )
+            return
+        }
+
+        let work = DispatchWorkItem { [weak self] in
+            guard let self,
+                  self.pendingInstallJob?.id == job.id,
+                  !self.handOffAccepted,
+                  !self.installTransferStarted else { return }
+            self.offerInstallURL(url, job: job)
+        }
+        handOffRetry = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delays[index], execute: work)
+    }
+
+    private func scheduleAcceptedHandOffSafety(job: StoreInstallJob) {
+        handOffStallTimeout?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self,
+                  self.pendingInstallJob?.id == job.id,
+                  !self.installTransferStarted else { return }
+            self.finishInstallAttemptAsReady(
+                job,
+                message: "تم عرض طلب التثبيت ولم يبدأ نقل IPA. الملف محفوظ وجاهز لإعادة المحاولة."
+            )
+        }
+        handOffStallTimeout = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 180, execute: work)
+    }
+
+    private func retryCorruptPackageIfNeeded(job: StoreInstallJob, stagedIPA: URL, error: Error) {
+        lock.lock()
+        let attempts = corruptRetries[job.appID] ?? 0
+        corruptRetries[job.appID] = attempts + 1
+        lock.unlock()
+
+        guard attempts == 0, !job.downloadURL.isEmpty else {
+            fail(job: job, error: error)
+            return
+        }
+
+        cleanupInstallAttempt(deleteSigned: true)
+        try? FileManager.default.removeItem(at: stagedIPA)
+        publish(
+            appID: job.appID,
+            state: StoreInstallState(
+                phase: .downloading,
+                progress: 0,
+                message: "النسخة المحفوظة غير سليمة · جاري تنزيلها من جديد"
+            )
+        )
+        beginDownload(job)
     }
 
     private static func gboxManifestURL(_ artifact: BatSignPackageArtifact) -> URL? {
@@ -579,15 +690,25 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
     }
 
     private func cleanupInstallAttempt(deleteSigned: Bool) {
-        installTimeout?.cancel()
-        installTimeout = nil
+        handOffRetry?.cancel()
+        handOffRetry = nil
+        handOffStallTimeout?.cancel()
+        handOffStallTimeout = nil
         installerServer?.stop()
         installerServer = nil
-        if deleteSigned, let signed = pendingSignedIPA { try? FileManager.default.removeItem(at: signed) }
+        installerServerReady = false
+
+        if deleteSigned, let signed = pendingSignedIPA {
+            try? FileManager.default.removeItem(at: signed)
+        }
         pendingInstallJob = nil
+        pendingArtifact = nil
         pendingSignedIPA = nil
-        pendingOpenURL = nil
+        pendingOriginalIPA = nil
         installTransferStarted = false
+        pendingHandOffURL = nil
+        handOffAccepted = false
+        handOffAttempts = 0
     }
 
     private func fail(job: StoreInstallJob, error: Error) {
@@ -697,8 +818,12 @@ extension StoreInstallCoordinator: URLSessionDownloadDelegate, URLSessionDelegat
     ) {
         guard let id = downloadTask.taskDescription, let job = job(id) else { return }
         let expected = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : job.expectedBytes
+
+        // BatSign's overall progress assigns 70% to the network transfer and
+        // the final 30% to package preparation. Components.swift maps 0...0.90
+        // to 0...100%, so 0.63 is the equivalent 70% hand-off point.
         let progress = expected > 0
-            ? min(0.90, max(0, Double(totalBytesWritten) / Double(expected) * 0.90))
+            ? min(0.63, max(0, Double(totalBytesWritten) / Double(expected) * 0.63))
             : 0
 
         let now = Date()
