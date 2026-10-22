@@ -13,6 +13,7 @@ struct KiraUpdatesSnapshot: Codable {
     let refreshedAt: Date
     let days: [KiraUpdatesDay]
     let appsByDay: [String: [StoreApp]]
+    let catalog: [StoreApp]?
 }
 
 private struct KiraPagesSource: Decodable {
@@ -57,6 +58,7 @@ private struct KiraPagesApp: Decodable {
     let iconURL: String?
     let localizedDescription: String?
     let category: String?
+    let fileType: String?
     let version: String?
     let versionDate: String?
     let size: Int64?
@@ -64,13 +66,14 @@ private struct KiraPagesApp: Decodable {
     let updatedAt: String?
     let downloadURL: String?
     let downloadUrl: String?
+    let ipaUrl: String?
     let url: String?
     let versions: [KiraPagesVersion]?
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, bundleIdentifier, bundleId, iconURL, localizedDescription, category
+        case id, name, bundleIdentifier, bundleId, iconURL, localizedDescription, category, fileType
         case version, versionDate, size, addedAt, updatedAt
-        case downloadURL, downloadUrl, url, versions
+        case downloadURL, downloadUrl, ipaUrl, url, versions
     }
 
     init(from decoder: Decoder) throws {
@@ -82,12 +85,14 @@ private struct KiraPagesApp: Decodable {
         iconURL = try? c.decodeIfPresent(String.self, forKey: .iconURL)
         localizedDescription = try? c.decodeIfPresent(String.self, forKey: .localizedDescription)
         category = try? c.decodeIfPresent(String.self, forKey: .category)
+        fileType = try? c.decodeIfPresent(String.self, forKey: .fileType)
         version = try? c.decodeIfPresent(String.self, forKey: .version)
         versionDate = try? c.decodeIfPresent(String.self, forKey: .versionDate)
         addedAt = try? c.decodeIfPresent(String.self, forKey: .addedAt)
         updatedAt = try? c.decodeIfPresent(String.self, forKey: .updatedAt)
         downloadURL = try? c.decodeIfPresent(String.self, forKey: .downloadURL)
         downloadUrl = try? c.decodeIfPresent(String.self, forKey: .downloadUrl)
+        ipaUrl = try? c.decodeIfPresent(String.self, forKey: .ipaUrl)
         url = try? c.decodeIfPresent(String.self, forKey: .url)
         versions = try? c.decodeIfPresent([KiraPagesVersion].self, forKey: .versions)
 
@@ -115,7 +120,7 @@ private struct KiraPagesApp: Decodable {
     }
 
     var effectiveDownloadURL: String? {
-        [downloadURL, downloadUrl, url].compactMap { $0?.nilWhenBlank }.first
+        [downloadURL, downloadUrl, ipaUrl, url].compactMap { $0?.nilWhenBlank }.first
             ?? currentVersionObject?.effectiveDownloadURL
     }
 
@@ -123,7 +128,16 @@ private struct KiraPagesApp: Decodable {
         id ?? bundleIdentifier ?? bundleId ?? "\(name)-\(effectiveVersion ?? "")"
     }
 
-    func storeApp(kind: String, addedDay: String?, updatedDay: String?) -> StoreApp {
+    var effectiveCategory: String? {
+        if let category = category?.nilWhenBlank { return category }
+        if let fileType = fileType?.nilWhenBlank,
+           ["dylib", "zip"].contains(fileType.lowercased()) {
+            return "دايلب"
+        }
+        return nil
+    }
+
+    func storeApp(kind: String?, addedDay: String?, updatedDay: String?) -> StoreApp {
         StoreApp(
             id: stableID,
             name: name,
@@ -132,12 +146,15 @@ private struct KiraPagesApp: Decodable {
             fileSize: effectiveSize,
             notes: localizedDescription,
             iconUrl: iconURL,
-            categories: category.map { [$0] },
+            featured: nil,
+            categories: effectiveCategory.map { [$0] },
+            installs: nil,
             updatedAt: updatedDay,
             addedAt: addedDay,
             versionUpdatedAt: KiraUpdatesClock.normalizedDay(effectiveVersionDate),
             feedKind: kind,
-            downloadUrl: effectiveDownloadURL
+            downloadUrl: effectiveDownloadURL,
+            downloadURL: effectiveDownloadURL
         )
     }
 }
@@ -184,13 +201,14 @@ enum KiraUpdatesClock {
 actor KiraPagesUpdatesService {
     static let shared = KiraPagesUpdatesService()
 
-    private let sourceURL = URL(string: "https://ikiraplus.pages.dev/IPA-AR.json")!
+    private let appsSourceURL = URL(string: "https://ikiraplus.pages.dev/IPA-AR.json")!
+    private let dylibSourceURL = URL(string: "https://ikiraplus.pages.dev/deb-AR.json")!
     private var memorySnapshot: KiraUpdatesSnapshot?
     private var refreshTask: Task<KiraUpdatesSnapshot, Error>?
 
     private var cacheFile: URL? {
         guard let root = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return nil }
-        return root.appendingPathComponent("iKiraPlus-updates-snapshot.json", isDirectory: false)
+        return root.appendingPathComponent("iKiraPlus-updates-snapshot-v2.json", isDirectory: false)
     }
 
     func cached() -> KiraUpdatesSnapshot? {
@@ -219,21 +237,21 @@ actor KiraPagesUpdatesService {
             return try await refreshTask.value
         }
 
-        let url = sourceURL
+        let appsURL = appsSourceURL
+        let dylibsURL = dylibSourceURL
         let task = Task<KiraUpdatesSnapshot, Error> {
-            var request = URLRequest(url: url)
-            request.timeoutInterval = 35
-            request.cachePolicy = force ? .reloadIgnoringLocalCacheData : .useProtocolCachePolicy
-            request.setValue("application/json", forHTTPHeaderField: "Accept")
-            request.setValue("ar-IQ,ar;q=0.9,en;q=0.7", forHTTPHeaderField: "Accept-Language")
+            async let appsData = Self.fetchData(from: appsURL, force: force)
+            async let dylibsDataResult: Data? = try? Self.fetchData(from: dylibsURL, force: force)
 
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, 200..<300 ~= http.statusCode else {
-                throw StoreAPIError.invalidResponse
-            }
+            let primaryData = try await appsData
+            let appSource = try JSONDecoder().decode(KiraPagesSource.self, from: primaryData)
+            let secondaryData = await dylibsDataResult
+            let dylibSource = secondaryData.flatMap { try? JSONDecoder().decode(KiraPagesSource.self, from: $0) }
 
-            let source = try JSONDecoder().decode(KiraPagesSource.self, from: data)
-            return Self.buildSnapshot(from: source.apps)
+            return Self.buildSnapshot(
+                fromApps: appSource.apps,
+                dylibs: dylibSource?.apps ?? []
+            )
         }
         refreshTask = task
 
@@ -247,6 +265,62 @@ actor KiraPagesUpdatesService {
             refreshTask = nil
             throw error
         }
+    }
+
+    func similarApps(to app: StoreApp, limit: Int = 8) async -> [StoreApp] {
+        guard !app.isDylibAsset else { return [] }
+
+        var source = cached()?.catalog ?? []
+        if source.isEmpty, let refreshed = try? await refreshIfNeeded() {
+            source = refreshed.catalog ?? []
+        }
+        guard !source.isEmpty else { return [] }
+
+        let targetCategory = app.normalizedPrimaryCategory
+        let hasCategory = targetCategory != "غيرمصنف" && !targetCategory.isEmpty
+
+        var candidates = source.filter { candidate in
+            guard candidate.id != app.id, !candidate.isDylibAsset else { return false }
+            if hasCategory {
+                return candidate.normalizedPrimaryCategory == targetCategory
+            }
+            return true
+        }
+
+        candidates.sort { lhs, rhs in
+            let lb = Self.bundleSimilarity(lhs.bundleId, app.bundleId)
+            let rb = Self.bundleSimilarity(rhs.bundleId, app.bundleId)
+            if lb != rb { return lb > rb }
+
+            let ln = Self.nameSimilarity(lhs.name, app.name)
+            let rn = Self.nameSimilarity(rhs.name, app.name)
+            if ln != rn { return ln > rn }
+
+            let lc = lhs.normalizedPrimaryCategory == targetCategory ? 1 : 0
+            let rc = rhs.normalizedPrimaryCategory == targetCategory ? 1 : 0
+            if lc != rc { return lc > rc }
+
+            let lv = Self.versionDistance(lhs.version, app.version)
+            let rv = Self.versionDistance(rhs.version, app.version)
+            if lv != rv { return lv < rv }
+
+            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        }
+
+        return Array(candidates.prefix(max(0, limit)))
+    }
+
+    private static func fetchData(from url: URL, force: Bool) async throws -> Data {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 35
+        request.cachePolicy = force ? .reloadIgnoringLocalCacheData : .useProtocolCachePolicy
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("ar-IQ,ar;q=0.9,en;q=0.7", forHTTPHeaderField: "Accept-Language")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, 200..<300 ~= http.statusCode else {
+            throw StoreAPIError.invalidResponse
+        }
+        return data
     }
 
     private func persist(_ snapshot: KiraUpdatesSnapshot) {
@@ -267,36 +341,127 @@ actor KiraPagesUpdatesService {
             alignedApps[key] = []
             return KiraUpdatesDay(date: key, new: 0, updated: 0)
         }
-        return KiraUpdatesSnapshot(refreshedAt: snapshot.refreshedAt, days: days, appsByDay: alignedApps)
+        return KiraUpdatesSnapshot(
+            refreshedAt: snapshot.refreshedAt,
+            days: days,
+            appsByDay: alignedApps,
+            catalog: snapshot.catalog
+        )
     }
 
-    private static func buildSnapshot(from sourceApps: [KiraPagesApp]) -> KiraUpdatesSnapshot {
+    private static func buildSnapshot(fromApps sourceApps: [KiraPagesApp], dylibs: [KiraPagesApp]) -> KiraUpdatesSnapshot {
         let dayKeys = KiraUpdatesClock.lastSevenDayKeys()
         let validDays = Set(dayKeys)
         var newCounts = Dictionary(uniqueKeysWithValues: dayKeys.map { ($0, 0) })
         var updatedCounts = Dictionary(uniqueKeysWithValues: dayKeys.map { ($0, 0) })
         var buckets = Dictionary(uniqueKeysWithValues: dayKeys.map { ($0, [StoreApp]()) })
 
-        for source in sourceApps {
-            let addedDay = KiraUpdatesClock.normalizedDay(source.addedAt)
-            let updatedDay = KiraUpdatesClock.normalizedDay(source.updatedAt ?? source.effectiveVersionDate)
+        let catalog = sourceApps.map { source in
+            source.storeApp(
+                kind: nil,
+                addedDay: KiraUpdatesClock.normalizedDay(source.addedAt),
+                updatedDay: KiraUpdatesClock.normalizedDay(source.updatedAt ?? source.effectiveVersionDate)
+            )
+        }
 
-            if let addedDay, validDays.contains(addedDay) {
-                newCounts[addedDay, default: 0] += 1
-                buckets[addedDay, default: []].append(
-                    source.storeApp(kind: "new", addedDay: addedDay, updatedDay: updatedDay)
-                )
-            } else if let updatedDay, validDays.contains(updatedDay) {
-                updatedCounts[updatedDay, default: 0] += 1
-                buckets[updatedDay, default: []].append(
-                    source.storeApp(kind: "updated", addedDay: addedDay, updatedDay: updatedDay)
-                )
+        func appendUpdates(_ sourceCollection: [KiraPagesApp]) {
+            for source in sourceCollection {
+                let addedDay = KiraUpdatesClock.normalizedDay(source.addedAt)
+                let updatedDay = KiraUpdatesClock.normalizedDay(source.updatedAt ?? source.effectiveVersionDate)
+
+                if let addedDay, validDays.contains(addedDay) {
+                    newCounts[addedDay, default: 0] += 1
+                    buckets[addedDay, default: []].append(
+                        source.storeApp(kind: "new", addedDay: addedDay, updatedDay: updatedDay)
+                    )
+                } else if let updatedDay, validDays.contains(updatedDay) {
+                    updatedCounts[updatedDay, default: 0] += 1
+                    buckets[updatedDay, default: []].append(
+                        source.storeApp(kind: "updated", addedDay: addedDay, updatedDay: updatedDay)
+                    )
+                }
             }
         }
+
+        appendUpdates(sourceApps)
+        appendUpdates(dylibs)
 
         let days = dayKeys.map {
             KiraUpdatesDay(date: $0, new: newCounts[$0] ?? 0, updated: updatedCounts[$0] ?? 0)
         }
-        return KiraUpdatesSnapshot(refreshedAt: Date(), days: days, appsByDay: buckets)
+        return KiraUpdatesSnapshot(
+            refreshedAt: Date(),
+            days: days,
+            appsByDay: buckets,
+            catalog: catalog
+        )
+    }
+
+    private static func normalizedText(_ value: String?) -> String {
+        (value ?? "")
+            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+            .lowercased()
+            .replacingOccurrences(of: "أ", with: "ا")
+            .replacingOccurrences(of: "إ", with: "ا")
+            .replacingOccurrences(of: "آ", with: "ا")
+            .filter { $0.isLetter || $0.isNumber || $0 == "." || $0 == " " }
+    }
+
+    private static func commonPrefixCount(_ lhs: String, _ rhs: String) -> Int {
+        var count = 0
+        for (a, b) in zip(lhs, rhs) {
+            guard a == b else { break }
+            count += 1
+        }
+        return count
+    }
+
+    private static func bundleSimilarity(_ lhs: String?, _ rhs: String?) -> Int {
+        let a = normalizedText(lhs).replacingOccurrences(of: " ", with: "")
+        let b = normalizedText(rhs).replacingOccurrences(of: " ", with: "")
+        guard !a.isEmpty, !b.isEmpty else { return 0 }
+        if a == b { return 10_000 }
+
+        let ac = a.split(separator: ".")
+        let bc = b.split(separator: ".")
+        var matchingComponents = 0
+        for (x, y) in zip(ac, bc) {
+            guard x == y else { break }
+            matchingComponents += 1
+        }
+        return matchingComponents * 1_000 + commonPrefixCount(a, b) * 10
+    }
+
+    private static func nameSimilarity(_ lhs: String, _ rhs: String) -> Int {
+        let a = normalizedText(lhs)
+        let b = normalizedText(rhs)
+        guard !a.isEmpty, !b.isEmpty else { return 0 }
+        if a == b { return 10_000 }
+
+        let aCompact = a.replacingOccurrences(of: " ", with: "")
+        let bCompact = b.replacingOccurrences(of: " ", with: "")
+        let prefix = commonPrefixCount(aCompact, bCompact)
+        let aTokens = Set(a.split(separator: " ").map(String.init))
+        let bTokens = Set(b.split(separator: " ").map(String.init))
+        let sharedTokens = aTokens.intersection(bTokens).count
+        let containsBonus = (aCompact.contains(bCompact) || bCompact.contains(aCompact)) ? 600 : 0
+        return prefix * 20 + sharedTokens * 400 + containsBonus
+    }
+
+    private static func versionDistance(_ lhs: String?, _ rhs: String?) -> Int64 {
+        func vector(_ raw: String?) -> [Int64] {
+            let parts = (raw ?? "")
+                .split(whereSeparator: { !$0.isNumber })
+                .compactMap { Int64($0) }
+            return Array((parts + [0, 0, 0, 0]).prefix(4))
+        }
+
+        let a = vector(lhs)
+        let b = vector(rhs)
+        let weights: [Int64] = [1_000_000_000, 1_000_000, 1_000, 1]
+        return zip(zip(a, b), weights).reduce(Int64(0)) { result, pair in
+            let ((x, y), weight) = pair
+            return result + abs(x - y) * weight
+        }
     }
 }

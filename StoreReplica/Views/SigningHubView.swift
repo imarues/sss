@@ -15,7 +15,7 @@ extension UTType {
 enum SigningHubTab: String, CaseIterable, Identifiable {
     case file = "رفع ملف"
     case link = "عبر رابط"
-    case apps = "تطبيقاتي"
+    case apps = "تنزيلاتي"
 
     var id: String { rawValue }
 }
@@ -39,6 +39,7 @@ final class SigningHubViewModel: ObservableObject {
     @Published var errorText: String?
     @Published var preparedApp: StoreApp?
     @Published var libraryItems: [SideloadLibraryItem] = []
+    @Published var directDownloads: [DirectDownloadItem] = []
 
     private let downloader = SideloadURLDownloader()
 
@@ -180,6 +181,11 @@ final class SigningHubViewModel: ObservableObject {
             let items = SideloadLibraryStore.items()
             DispatchQueue.main.async { self.libraryItems = items }
         }
+
+        Task {
+            let direct = await DirectDownloadLibrary.shared.items()
+            await MainActor.run { self.directDownloads = direct }
+        }
     }
 
     private func prepareAndInstall(
@@ -267,7 +273,7 @@ struct SigningHubView: View {
                         switch model.selectedTab {
                         case .file: fileSection
                         case .link: linkSection
-                        case .apps: myAppsSection
+                        case .apps: downloadsSection
                         }
                     }
 
@@ -315,6 +321,9 @@ struct SigningHubView: View {
         .onAppear { model.refreshLibrary() }
         .onChange(of: model.selectedTab) { tab in
             if tab == .apps { model.refreshLibrary() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: DirectDownloadLibrary.changedNotification)) { _ in
+            model.refreshLibrary()
         }
     }
 
@@ -788,7 +797,7 @@ struct SigningHubView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
-    private var myAppsSection: some View {
+    private var downloadsSection: some View {
         VStack(spacing: 12) {
             HStack {
                 Button { model.refreshLibrary() } label: {
@@ -799,24 +808,24 @@ struct SigningHubView: View {
                 .buttonStyle(.plain)
                 Spacer()
                 VStack(alignment: .trailing, spacing: 2) {
-                    Text("تطبيقاتي")
+                    Text("تنزيلاتي")
                         .font(AppFont.black(19))
                         .foregroundStyle(StoreTheme.textPrimary)
-                    Text("التطبيقات المحمّلة من الروابط والتحديثات")
+                    Text("التطبيقات وملفات الديلب المحمّلة")
                         .font(AppFont.regular(10.5))
                         .foregroundStyle(StoreTheme.textSecondary)
                 }
             }
 
-            if model.libraryItems.isEmpty {
+            if model.libraryItems.isEmpty && model.directDownloads.isEmpty {
                 VStack(spacing: 10) {
                     Image(systemName: "square.stack.3d.up.slash")
                         .font(.system(size: 31, weight: .semibold))
                         .foregroundStyle(StoreTheme.textSecondary)
-                    Text("ماكو تطبيقات محفوظة بعد")
+                    Text("ماكو تنزيلات محفوظة بعد")
                         .font(AppFont.bold(13))
                         .foregroundStyle(StoreTheme.textPrimary)
-                    Text("أي IPA تحمله من رابط أو من قسم التحديثات يطلع هنا تلقائياً.")
+                    Text("أي IPA أو dylib أو zip تحمله من التطبيق يطلع هنا تلقائياً.")
                         .font(AppFont.regular(10.5))
                         .foregroundStyle(StoreTheme.textSecondary)
                         .multilineTextAlignment(.center)
@@ -827,11 +836,59 @@ struct SigningHubView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             } else {
                 LazyVStack(spacing: 10) {
+                    ForEach(model.directDownloads) { item in
+                        directDownloadRow(item)
+                    }
                     ForEach(model.libraryItems) { item in
                         libraryRow(item)
                     }
                 }
             }
+        }
+    }
+
+    private func directDownloadRow(_ item: DirectDownloadItem) -> some View {
+        HStack(spacing: 11) {
+            VStack(spacing: 8) {
+                ShareLink(item: item.fileURL) {
+                    Label("مشاركة", systemImage: "square.and.arrow.up")
+                        .font(AppFont.bold(10.5))
+                        .foregroundStyle(Color.black)
+                        .frame(width: 82, height: 31)
+                        .background(DownloadAssetTheme.gold)
+                        .clipShape(Capsule())
+                }
+
+                Text(item.fileType.uppercased())
+                    .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                    .foregroundStyle(DownloadAssetTheme.gold)
+                    .frame(width: 82, height: 28)
+                    .background(DownloadAssetTheme.gold.opacity(0.12))
+                    .clipShape(Capsule())
+            }
+
+            VStack(alignment: .trailing, spacing: 5) {
+                Text(item.name)
+                    .font(AppFont.black(14))
+                    .foregroundStyle(StoreTheme.textPrimary)
+                    .lineLimit(1)
+                Text("v\(item.version) • \(formatBytes(item.size))")
+                    .font(AppFont.regular(10.5))
+                    .foregroundStyle(StoreTheme.textSecondary)
+                Text("ملف ديلب")
+                    .font(AppFont.medium(9.5))
+                    .foregroundStyle(DownloadAssetTheme.gold)
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+
+            remoteIcon(url: item.iconURL, size: 58, gold: true)
+        }
+        .padding(13)
+        .background(DownloadAssetTheme.goldSoft.opacity(0.72))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(DownloadAssetTheme.gold.opacity(0.78), lineWidth: 1)
         }
     }
 
@@ -895,6 +952,35 @@ struct SigningHubView: View {
         .overlay {
             RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
                 .stroke(Color.white.opacity(0.08), lineWidth: 0.7)
+        }
+    }
+
+    private func remoteIcon(url: URL?, size: CGFloat, gold: Bool) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
+                .fill(gold ? DownloadAssetTheme.gold.opacity(0.16) : StoreTheme.field)
+            if let url {
+                AsyncImage(url: url) { phase in
+                    if let image = phase.image {
+                        image.resizable().scaledToFill()
+                    } else if phase.error != nil {
+                        Image(systemName: "shippingbox.fill")
+                            .foregroundStyle(gold ? DownloadAssetTheme.gold : StoreTheme.accent)
+                    } else {
+                        ProgressView().tint(gold ? DownloadAssetTheme.gold : StoreTheme.accent)
+                    }
+                }
+            } else {
+                Image(systemName: "shippingbox.fill")
+                    .font(.system(size: size * 0.34, weight: .semibold))
+                    .foregroundStyle(gold ? DownloadAssetTheme.gold : StoreTheme.accent)
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
+                .stroke(gold ? DownloadAssetTheme.gold.opacity(0.55) : Color.white.opacity(0.08), lineWidth: 0.8)
         }
     }
 

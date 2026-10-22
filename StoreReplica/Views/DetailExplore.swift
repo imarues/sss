@@ -17,11 +17,11 @@ struct AppDetailView: View {
             VStack(spacing: 22) {
                 detailHero
                 detailInfo
-                applePreviewSection
+                if !app.isDylibAsset { applePreviewSection }
                 if let notes = app.notes, !notes.isEmpty { notesCard(notes) }
-                extrasCard
-                ratingCard
-                if !similar.isEmpty { similarSection }
+                if !app.isDylibAsset { extrasCard }
+                if !app.isDylibAsset { ratingCard }
+                if !app.isDylibAsset && !similar.isEmpty { similarSection }
                 Color.clear.frame(height: 28)
             }
             .padding(.top, 12)
@@ -31,12 +31,21 @@ struct AppDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .task(id: app.id) {
-            async let s: SimilarResponse? = try? await StoreAPI.shared.similar(appId: app.id)
+            if app.isDylibAsset {
+                similar = []
+                extras = nil
+                reviews = nil
+                appleItem = nil
+                appleLookupFinished = true
+                return
+            }
+
+            async let localSimilar: [StoreApp] = KiraPagesUpdatesService.shared.similarApps(to: app, limit: 8)
             async let e: PackageExtras? = try? await StoreAPI.shared.extras(appId: app.id)
             async let r: ReviewsResponse? = try? await StoreAPI.shared.reviews(appId: app.id)
             async let a: AppleAppStoreItem? = AppleAppStoreLookup.shared.item(bundleID: app.bundleId ?? "")
 
-            similar = await s?.apps ?? []
+            similar = await localSimilar
             extras = await e
             reviews = await r
             appleItem = await a
@@ -52,12 +61,18 @@ struct AppDetailView: View {
                     .font(AppFont.black(24))
                     .foregroundStyle(StoreTheme.textPrimary)
                     .multilineTextAlignment(.center)
-                Text(app.bundleId ?? "")
-                    .font(AppFont.regular(11))
-                    .foregroundStyle(StoreTheme.textSecondary)
-                    .lineLimit(1)
+                if let bundle = app.bundleId, !bundle.isEmpty {
+                    Text(bundle)
+                        .font(AppFont.regular(11))
+                        .foregroundStyle(StoreTheme.textSecondary)
+                        .lineLimit(1)
+                }
             }
-            InstallPill(title: "تثبيت", app: app)
+            if app.isDylibAsset {
+                DirectDownloadButton(app: app)
+            } else {
+                InstallPill(title: "تثبيت", app: app)
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
@@ -69,7 +84,7 @@ struct AppDetailView: View {
             divider
             metric("الحجم", app.fileSize.map(formatBytes) ?? "—")
             divider
-            metric("التثبيتات", "\(app.installs ?? 0)")
+            metric("التصنيف", app.primaryCategoryName)
         }
         .padding(.vertical, 15)
         .storeCard(radius: 18)
@@ -82,8 +97,14 @@ struct AppDetailView: View {
 
     private func metric(_ title: String, _ value: String) -> some View {
         VStack(spacing: 4) {
-            Text(value).font(AppFont.bold(13)).foregroundStyle(StoreTheme.textPrimary)
-            Text(title).font(AppFont.regular(10.5)).foregroundStyle(StoreTheme.textSecondary)
+            Text(value)
+                .font(AppFont.bold(13))
+                .foregroundStyle(StoreTheme.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+            Text(title)
+                .font(AppFont.regular(10.5))
+                .foregroundStyle(StoreTheme.textSecondary)
         }
         .frame(maxWidth: .infinity)
     }
@@ -127,7 +148,7 @@ struct AppDetailView: View {
 
     private func notesCard(_ notes: String) -> some View {
         VStack(alignment: .trailing, spacing: 12) {
-            Text("وصف التطبيق")
+            Text(app.isDylibAsset ? "وصف الملف" : "وصف التطبيق")
                 .font(AppFont.black(17))
                 .foregroundStyle(StoreTheme.textPrimary)
             Text(notes)
@@ -214,10 +235,15 @@ struct AppDetailView: View {
 
     private var similarSection: some View {
         VStack(spacing: 12) {
-            SectionTitle(title: "تطبيقات مشابهة")
+            SectionTitle(title: app.isGameAsset ? "الألعاب المتشابهة" : "التطبيقات المتشابهة")
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
-                    ForEach(similar.prefix(10)) { ShowcaseCard(app: $0) }
+                    ForEach(similar.prefix(8)) { candidate in
+                        NavigationLink(destination: AppDetailView(app: candidate)) {
+                            ShowcaseCard(app: candidate)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
                 .padding(.horizontal, StoreTheme.pageHorizontal)
             }

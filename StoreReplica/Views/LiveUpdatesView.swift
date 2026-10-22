@@ -23,7 +23,16 @@ private enum UpdatesViewDateTools {
 
     static func weekday(for key: String) -> String {
         guard let date = date(from: key) else { return "—" }
-        return formatter("EEEE", locale: "ar_IQ").string(from: date)
+        switch calendar.component(.weekday, from: date) {
+        case 1: return "الأحد"
+        case 2: return "الاثنين"
+        case 3: return "الثلاثاء"
+        case 4: return "الأربعاء"
+        case 5: return "الخميس"
+        case 6: return "الجمعة"
+        case 7: return "السبت"
+        default: return "—"
+        }
     }
 
     static func dayNumber(for key: String) -> Int {
@@ -93,7 +102,7 @@ struct LiveUpdatesView: View {
                 Text("التحديثات")
                     .font(AppFont.black(27))
                     .foregroundStyle(StoreTheme.textPrimary)
-                Text("آخر الإضافات والتحديثات من مصدر iKiraPlus")
+                Text("آخر الإضافات والتحديثات من مصادر iKiraPlus")
                     .font(AppFont.regular(11.5))
                     .foregroundStyle(StoreTheme.textSecondary)
             }
@@ -168,10 +177,11 @@ struct LiveUpdatesView: View {
             withAnimation(.easeInOut(duration: 0.16)) { selectedDay = day.date }
         } label: {
             VStack(spacing: 5) {
-                Text(shortWeekday(weekday))
-                    .font(AppFont.medium(10.5))
+                Text(weekday)
+                    .font(AppFont.medium(9.2))
                     .foregroundStyle(selected ? StoreTheme.onAccent : StoreTheme.textSecondary)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.72)
                 Text("\(number)")
                     .font(AppFont.black(18))
                     .foregroundStyle(selected ? StoreTheme.onAccent : StoreTheme.textPrimary)
@@ -179,7 +189,7 @@ struct LiveUpdatesView: View {
                     .font(AppFont.medium(9.5))
                     .foregroundStyle(selected ? StoreTheme.onAccent.opacity(0.75) : StoreTheme.textSecondary)
             }
-            .frame(width: 56, height: 72)
+            .frame(width: 68, height: 74)
             .background(selected ? StoreTheme.accent : StoreTheme.surface)
             .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
             .overlay {
@@ -200,7 +210,7 @@ struct LiveUpdatesView: View {
                 Text(UpdatesViewDateTools.relativeTitle(for: selectedDay))
                     .font(AppFont.black(18))
                     .foregroundStyle(StoreTheme.textPrimary)
-                Text("\(selectedAllApps.count) تطبيق")
+                Text("\(selectedAllApps.count) عنصر")
                     .font(AppFont.regular(10.5))
                     .foregroundStyle(StoreTheme.textSecondary)
             }
@@ -219,7 +229,11 @@ struct LiveUpdatesView: View {
                         }
                         .buttonStyle(.plain)
 
-                        InstallPill(app: app)
+                        if app.isDylibAsset {
+                            DirectDownloadButton(app: app, compact: true)
+                        } else {
+                            InstallPill(app: app)
+                        }
                     }
                     .padding(.vertical, 10)
 
@@ -310,7 +324,7 @@ struct LiveUpdatesView: View {
             Text("لا توجد إضافات أو تحديثات")
                 .font(AppFont.bold(14))
                 .foregroundStyle(StoreTheme.textPrimary)
-            Text("ماكو تطبيقات مسجلة بهذا اليوم في IPA-AR.json")
+            Text("ماكو تطبيقات أو ملفات ديلب مسجلة بهذا اليوم")
                 .font(AppFont.regular(11))
                 .foregroundStyle(StoreTheme.textSecondary)
         }
@@ -325,7 +339,7 @@ struct LiveUpdatesView: View {
             Image(systemName: "wifi.exclamationmark")
                 .font(.system(size: 30, weight: .semibold))
                 .foregroundStyle(StoreTheme.badgeUpdated)
-            Text("تعذر تحديث IPA-AR.json")
+            Text("تعذر تحديث المصادر")
                 .font(AppFont.bold(14))
                 .foregroundStyle(StoreTheme.textPrimary)
             Text(message)
@@ -385,18 +399,5 @@ struct LiveUpdatesView: View {
             selectedDay = days.first?.date ?? selectedDay
         }
         visibleLimit = 35
-    }
-
-    private func shortWeekday(_ value: String) -> String {
-        switch value {
-        case "الأحد": return "أحد"
-        case "الاثنين", "الإثنين": return "اثن"
-        case "الثلاثاء": return "ثلا"
-        case "الأربعاء": return "أرب"
-        case "الخميس": return "خمي"
-        case "الجمعة": return "جمع"
-        case "السبت": return "سبت"
-        default: return String(value.prefix(3))
-        }
     }
 }
