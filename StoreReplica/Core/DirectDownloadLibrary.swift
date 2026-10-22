@@ -251,39 +251,32 @@ struct DirectDownloadButton: View {
     let app: StoreApp
     var compact = false
 
-    @State private var downloading = false
+    @ObservedObject private var transfers = TransferActivityCenter.shared
     @State private var downloaded = false
-    @State private var failed = false
+
+    private var operation: DirectTransferOperation? {
+        transfers.directOperation(for: app)
+    }
 
     var body: some View {
         Button {
-            guard !downloading && !downloaded else { return }
-            downloading = true
-            failed = false
-            Task {
-                do {
-                    _ = try await DirectDownloadLibrary.shared.download(app: app)
-                    await MainActor.run {
-                        downloading = false
-                        downloaded = true
-                    }
-                } catch {
-                    await MainActor.run {
-                        downloading = false
-                        failed = true
-                    }
-                }
-            }
+            guard operation == nil && !downloaded else { return }
+            transfers.startDirectDownload(app)
         } label: {
             HStack(spacing: 6) {
-                if downloading {
-                    ProgressView()
+                if let operation, !operation.failed {
+                    ProgressView(value: operation.progress)
                         .tint(Color.black)
                         .scaleEffect(0.78)
+                        .frame(width: 16, height: 16)
+                    Text("\(Int(operation.progress * 100))%")
+                        .font(AppFont.bold(compact ? 10.5 : 12))
+                        .lineLimit(1)
+                } else {
+                    Text(downloaded ? "تم التحميل" : ((operation?.failed == true) ? "إعادة" : "تحميل"))
+                        .font(AppFont.bold(compact ? 10.5 : 12))
+                        .lineLimit(1)
                 }
-                Text(downloaded ? "تم التحميل" : (failed ? "إعادة" : "تحميل"))
-                    .font(AppFont.bold(compact ? 10.5 : 12))
-                    .lineLimit(1)
             }
             .foregroundStyle(Color.black)
             .frame(width: compact ? 78 : 104, height: compact ? 34 : 40)
@@ -291,9 +284,15 @@ struct DirectDownloadButton: View {
             .clipShape(Capsule())
         }
         .buttonStyle(.plain)
-        .disabled(downloading || downloaded || app.effectiveDownloadURL == nil)
+        .disabled((operation != nil && operation?.failed == false) || downloaded || app.effectiveDownloadURL == nil)
         .task(id: app.id + (app.version ?? "")) {
             downloaded = await DirectDownloadLibrary.shared.contains(appID: app.id, version: app.version)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: DirectDownloadLibrary.changedNotification)) { _ in
+            Task {
+                let value = await DirectDownloadLibrary.shared.contains(appID: app.id, version: app.version)
+                await MainActor.run { downloaded = value }
+            }
         }
     }
 }
