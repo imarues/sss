@@ -10,7 +10,7 @@ struct ActiveTransfersInlineView: View {
     }
 
     private var detailApp: StoreApp? {
-        transfers.trackedApp(id: detailCenter.activeAppID)
+        detailCenter.activeApp ?? transfers.trackedApp(id: detailCenter.activeAppID)
     }
 
     var activeCount: Int {
@@ -31,10 +31,10 @@ struct ActiveTransfersInlineView: View {
                 ForEach(transfers.activeDirectOperations) { operation in
                     transferRow(
                         app: operation.app,
-                        kind: "تحميل ديلب",
+                        kind: operation.app.isDylibAsset ? "تحميل ديلب" : "تحميل التطبيق",
                         progress: operation.progress,
                         status: operation.statusText,
-                        accent: DownloadAssetTheme.gold
+                        accent: operation.app.isDylibAsset ? DownloadAssetTheme.gold : StoreTheme.accent
                     )
                 }
 
@@ -45,7 +45,9 @@ struct ActiveTransfersInlineView: View {
                             kind: detailCenter.activeKind == .duplicate ? "تكرار التطبيق" : "دمج ديلب مع التطبيق",
                             progress: detailCenter.progress,
                             status: detailCenter.statusText.isEmpty ? "جاري التجهيز" : detailCenter.statusText,
-                            accent: detailCenter.activeKind == .duplicate ? StoreTheme.accent : Color(red: 0.04, green: 0.65, blue: 0.59)
+                            accent: detailCenter.activeKind == .duplicate ? StoreTheme.accent : Color(red: 0.04, green: 0.65, blue: 0.59),
+                            bundleOverride: detailCenter.activeTargetBundleID,
+                            versionOverride: detailCenter.activeVersion
                         )
                     } else {
                         genericDetailRow
@@ -71,33 +73,57 @@ struct ActiveTransfersInlineView: View {
         kind: String,
         progress: Double,
         status: String,
-        accent: Color
+        accent: Color,
+        bundleOverride: String? = nil,
+        versionOverride: String? = nil
     ) -> some View {
         let value = max(0, min(1, progress))
-        return VStack(spacing: 10) {
-            HStack(spacing: 11) {
-                AppIconView(app: app, size: 52)
+        let bundle = bundleOverride ?? app.bundleId ?? app.id
+        let version = versionOverride ?? app.version ?? "—"
 
-                VStack(alignment: .leading, spacing: 3) {
+        return VStack(spacing: 11) {
+            HStack(spacing: 12) {
+                AppIconView(app: app, size: 56)
+
+                VStack(alignment: .trailing, spacing: 4) {
                     Text(app.name)
-                        .font(AppFont.black(13.5))
+                        .font(AppFont.black(14.5))
                         .foregroundStyle(StoreTheme.textPrimary)
                         .lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Text(kind)
-                        .font(AppFont.bold(10))
-                        .foregroundStyle(accent)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Text(status.storeForcedRTL)
-                        .font(AppFont.regular(10))
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+
+                    Text(bundle)
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .foregroundStyle(StoreTheme.textSecondary)
                         .lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .minimumScaleFactor(0.72)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .environment(\.layoutDirection, .leftToRight)
+
+                    HStack(spacing: 7) {
+                        Text("الإصدار \(version)")
+                            .font(AppFont.regular(9.8))
+                            .foregroundStyle(StoreTheme.textSecondary)
+                        Text("•")
+                            .foregroundStyle(StoreTheme.textSecondary.opacity(0.65))
+                        Text(kind)
+                            .font(AppFont.bold(10))
+                            .foregroundStyle(accent)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+
+                    Text(status.storeForcedRTL)
+                        .font(AppFont.regular(9.8))
+                        .foregroundStyle(StoreTheme.textSecondary)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
                 }
 
                 Text("\(Int(value * 100))%")
-                    .font(AppFont.black(17))
+                    .font(AppFont.black(19))
                     .foregroundStyle(accent)
+                    .frame(minWidth: 52, alignment: .leading)
+                    .environment(\.layoutDirection, .leftToRight)
             }
 
             GeometryReader { proxy in
@@ -108,6 +134,7 @@ struct ActiveTransfersInlineView: View {
                 }
             }
             .frame(height: 8)
+            .environment(\.layoutDirection, .leftToRight)
         }
         .padding(13)
         .background(StoreTheme.surface)
