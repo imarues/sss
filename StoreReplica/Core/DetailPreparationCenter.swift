@@ -3,9 +3,9 @@ import SwiftUI
 import UIKit
 import Zip
 
-// One persistent worker for the expensive operations launched from the app-detail sheet.
-// It deliberately outlives the sheet so the user can dismiss the UI while the IPA keeps
-// downloading in a background URLSession and the Live Activity keeps reflecting progress.
+// Persistent worker for duplicate / dylib operations launched from app details.
+// The downloaded IPA is copied out of URLSession's temporary location before
+// any expensive work begins, so leaving the sheet or app cannot invalidate it.
 enum DetailPreparationKind: String, Codable {
     case duplicate
     case dylib
@@ -37,6 +37,7 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
     private let lock = NSLock()
     private var record: DetailPreparationRecord?
     private var preparingRecordID: String?
+    private var downloadRecoveryAttempts: [String: Int] = [:]
 
     private lazy var session: URLSession = {
         let config = URLSessionConfiguration.background(withIdentifier: Self.backgroundSessionIdentifier)
@@ -55,9 +56,28 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
         restoreRecord()
     }
 
+    var activeApp: StoreApp? {
+        snapshotRecord()?.app
+    }
+
+    var activeTargetBundleID: String? {
+        guard let current = snapshotRecord() else { return nil }
+        let base = (current.app.bundleId?.isEmpty == false ? current.app.bundleId : nil) ?? current.app.id
+        if current.kind == .duplicate, let number = current.copyNumber {
+            return base + String(number)
+        }
+        return base
+    }
+
+    var activeVersion: String? {
+        snapshotRecord()?.app.version
+    }
+
     func bootstrap() {
         _ = session
         guard let current = snapshotRecord() else { return }
+
+        TransferActivityCenter.shared.track(current.app)
         DispatchQueue.main.async {
             self.activeAppID = current.app.id
             self.activeKind = current.kind
@@ -65,13 +85,24 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
             self.statusText = "جاري استكمال العملية"
         }
         InstallLiveActivityBridge.begin(job: liveJob(for: current))
+
         session.getAllTasks { [weak self] tasks in
             guard let self else { return }
             if tasks.contains(where: { $0.taskDescription == current.id }) { return }
+
+            let stable = self.persistentSourceURL(for: current)
+            if StoreDownloadStorage.isValidIPA(at: stable) {
+                self.prepare(record: current, sourceIPA: stable)
+                return
+            }
+
             if StoreDownloadStorage.hasValidStagedIPA(for: current.app),
                let cached = StoreDownloadStorage.stagedURL(for: current.app) {
                 self.prepare(record: current, sourceIPA: cached)
+                return
             }
+
+            self.restartDownload(record: current, reason: "جاري استكمال التحميل")
         }
     }
 
@@ -114,6 +145,8 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
                 dylibPaths: storedDylibs.map(\.path)
             )
             setRecord(next)
+            TransferActivityCenter.shared.track(app)
+
             DispatchQueue.main.async {
                 self.activeAppID = app.id
                 self.activeKind = kind
@@ -126,6 +159,13 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
             StoreDownloadStorage.registerVisibleCategory(for: app)
             InstallLiveActivityBridge.begin(job: liveJob(for: next))
 
+            let stable = persistentSourceURL(for: next)
+            if StoreDownloadStorage.isValidIPA(at: stable) {
+                publishProgress(0.50, text: "استخدام الملف المحفوظ", record: next)
+                prepare(record: next, sourceIPA: stable)
+                return
+            }
+
             if StoreDownloadStorage.hasValidStagedIPA(for: app),
                let cached = StoreDownloadStorage.stagedURL(for: app) {
                 publishProgress(0.48, text: "استخدام النسخة المحفوظة", record: next)
@@ -133,24 +173,59 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
                 return
             }
 
-            guard let raw = app.effectiveDownloadURL?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !raw.isEmpty,
-                  let url = URL(string: raw),
-                  let scheme = url.scheme?.lowercased(),
-                  scheme == "http" || scheme == "https" else {
-                fail(record: next, error: SideloadSigningError.invalidURL)
-                return
-            }
-
-            var request = URLRequest(url: url)
-            request.cachePolicy = .reloadIgnoringLocalCacheData
-            request.timeoutInterval = 60
-            request.setValue("application/octet-stream,*/*;q=0.9", forHTTPHeaderField: "Accept")
-            let task = session.downloadTask(with: request)
-            task.taskDescription = next.id
-            task.resume()
+            try startDownload(record: next)
         } catch {
             publishError(error.localizedDescription)
+        }
+    }
+
+    private func startDownload(record: DetailPreparationRecord) throws {
+        guard let raw = record.app.effectiveDownloadURL?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty,
+              let url = URL(string: raw),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            throw SideloadSigningError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.timeoutInterval = 60
+        request.setValue("application/octet-stream,*/*;q=0.9", forHTTPHeaderField: "Accept")
+        let task = session.downloadTask(with: request)
+        task.taskDescription = record.id
+        task.resume()
+    }
+
+    private func restartDownload(record: DetailPreparationRecord, reason: String) {
+        lock.lock()
+        let attempts = downloadRecoveryAttempts[record.id] ?? 0
+        downloadRecoveryAttempts[record.id] = attempts + 1
+        preparingRecordID = nil
+        lock.unlock()
+
+        guard attempts < 2 else {
+            fail(record: record, error: StoreDownloadStorageError.sourceMissing)
+            return
+        }
+
+        let stable = persistentSourceURL(for: record)
+        if StoreDownloadStorage.isValidIPA(at: stable) {
+            prepare(record: record, sourceIPA: stable)
+            return
+        }
+
+        if StoreDownloadStorage.hasValidStagedIPA(for: record.app),
+           let cached = StoreDownloadStorage.stagedURL(for: record.app) {
+            prepare(record: record, sourceIPA: cached)
+            return
+        }
+
+        publishProgress(0.48, text: reason, record: record)
+        do {
+            try startDownload(record: record)
+        } catch {
+            fail(record: record, error: error)
         }
     }
 
@@ -202,6 +277,8 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
                     self.progress = 1
                     self.statusText = "جاري التوقيع والتثبيت"
                     self.busy = false
+                    TransferActivityCenter.shared.track(preparedApp)
+
                     NotificationCenter.default.post(
                         name: Self.completedNotification,
                         object: nil,
@@ -212,8 +289,6 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
                     self.clearRecord()
 
                     if SigningAssetProvider.hasCredentials {
-                        // StoreInstallCoordinator starts a fresh Live Activity for signing/installing,
-                        // replacing the preparation activity without a visible gap.
                         StoreInstallCoordinator.shared.start(preparedApp)
                     } else {
                         InstallLiveActivityBridge.finish(
@@ -225,6 +300,9 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
                     }
                     self.finishBackgroundEventsIfPossible()
                 }
+            } catch StoreDownloadStorageError.sourceMissing {
+                StoreInstallKeepAlive.shared.end(hold)
+                self.restartDownload(record: record, reason: "إعادة استلام ملف التطبيق")
             } catch {
                 StoreInstallKeepAlive.shared.end(hold)
                 self.fail(record: record, error: error)
@@ -240,8 +318,6 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
             self.statusText = text
             self.busy = true
         }
-        // Keep ActivityKit in its progressive/download phase until StoreInstallCoordinator
-        // takes over the signing phase. This preserves an actual percentage in Dynamic Island.
         InstallLiveActivityBridge.update(
             job: liveJob(for: record),
             phase: .downloading,
@@ -269,24 +345,19 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
     }
 
     private func liveJob(for record: DetailPreparationRecord) -> StoreInstallJob {
-        StoreInstallJob(
+        let targetBundle: String = {
+            let base = (record.app.bundleId?.isEmpty == false ? record.app.bundleId : nil) ?? record.app.id
+            if record.kind == .duplicate, let number = record.copyNumber {
+                return base + String(number)
+            }
+            return base
+        }()
+
+        return StoreInstallJob(
             id: record.id,
             appID: "detail-\(record.kind.rawValue)-\(record.app.id)",
             appName: record.kind == .duplicate ? "تكرار \(record.app.name)" : "دمج ديلب · \(record.app.name)",
-            bundleID: record.app.bundleId ?? record.app.id,
-            version: record.app.version ?? "1.0",
-            iconURL: record.app.iconUrl,
-            downloadURL: record.app.effectiveDownloadURL ?? "",
-            expectedBytes: record.app.fileSize ?? 0
-        )
-    }
-
-    private func originalDownloadJob(for record: DetailPreparationRecord) -> StoreInstallJob {
-        StoreInstallJob(
-            id: record.id,
-            appID: record.app.id,
-            appName: record.app.name,
-            bundleID: record.app.bundleId ?? record.app.id,
+            bundleID: targetBundle,
             version: record.app.version ?? "1.0",
             iconURL: record.app.iconUrl,
             downloadURL: record.app.effectiveDownloadURL ?? "",
@@ -300,6 +371,7 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         var result: [URL] = []
         var used = Set<String>()
+
         for source in urls {
             guard source.pathExtension.lowercased() == "dylib" else {
                 throw SideloadSigningError.unsupportedDylib(source.lastPathComponent)
@@ -324,6 +396,48 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
         return result
     }
 
+    private func persistDownloadedSource(from temporaryURL: URL, record: DetailPreparationRecord) throws -> URL {
+        let dir = operationRoot.appendingPathComponent(record.id, isDirectory: true)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        let destination = persistentSourceURL(for: record)
+
+        if StoreDownloadStorage.isValidIPA(at: destination) {
+            return destination
+        }
+        try? fm.removeItem(at: destination)
+
+        guard fm.fileExists(atPath: temporaryURL.path) else {
+            throw StoreDownloadStorageError.sourceMissing
+        }
+
+        do {
+            try fm.moveItem(at: temporaryURL, to: destination)
+        } catch {
+            do {
+                try fm.copyItem(at: temporaryURL, to: destination)
+            } catch {
+                if !fm.fileExists(atPath: temporaryURL.path) {
+                    throw StoreDownloadStorageError.sourceMissing
+                }
+                let data = try Data(contentsOf: temporaryURL, options: [.mappedIfSafe])
+                try data.write(to: destination, options: .atomic)
+            }
+        }
+
+        try StoreDownloadStorage.validateIPA(at: destination)
+        try? fm.setAttributes(
+            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+            ofItemAtPath: destination.path
+        )
+        return destination
+    }
+
+    private func persistentSourceURL(for record: DetailPreparationRecord) -> URL {
+        operationRoot
+            .appendingPathComponent(record.id, isDirectory: true)
+            .appendingPathComponent("source.ipa", isDirectory: false)
+    }
+
     private var operationRoot: URL {
         let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let dir = base.appendingPathComponent("DetailPreparation", isDirectory: true)
@@ -339,6 +453,7 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
         lock.lock()
         record = value
         preparingRecordID = nil
+        downloadRecoveryAttempts[value.id] = 0
         if let data = try? JSONEncoder().encode(value) {
             try? data.write(to: recordFile, options: .atomic)
         }
@@ -349,6 +464,7 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
         guard let data = try? Data(contentsOf: recordFile),
               let saved = try? JSONDecoder().decode(DetailPreparationRecord.self, from: data) else { return }
         record = saved
+        TransferActivityCenter.shared.track(saved.app)
         DispatchQueue.main.async {
             self.activeAppID = saved.app.id
             self.activeKind = saved.kind
@@ -358,20 +474,24 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
     }
 
     private func snapshotRecord() -> DetailPreparationRecord? {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         return record
     }
 
     private func record(id: String) -> DetailPreparationRecord? {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        defer { lock.unlock() }
         guard record?.id == id else { return nil }
         return record
     }
 
     private func clearRecord() {
         lock.lock()
+        let oldID = record?.id
         record = nil
         preparingRecordID = nil
+        if let oldID { downloadRecoveryAttempts[oldID] = nil }
         try? fm.removeItem(at: recordFile)
         lock.unlock()
         activeAppID = nil
@@ -417,12 +537,11 @@ extension DetailPreparationCenter: URLSessionDownloadDelegate, URLSessionDelegat
         }
 
         do {
-            let staged = try StoreDownloadStorage.stageFinishedDownload(
-                from: location,
-                job: originalDownloadJob(for: current)
-            )
+            let stable = try persistDownloadedSource(from: location, record: current)
             publishProgress(0.52, text: "تم التحميل · جاري تجهيز التطبيق", record: current)
-            prepare(record: current, sourceIPA: staged)
+            prepare(record: current, sourceIPA: stable)
+        } catch StoreDownloadStorageError.sourceMissing {
+            restartDownload(record: current, reason: "اكتمل التحميل · إعادة استلام الملف")
         } catch {
             fail(record: current, error: error)
         }
@@ -432,7 +551,10 @@ extension DetailPreparationCenter: URLSessionDownloadDelegate, URLSessionDelegat
         guard let error,
               let id = task.taskDescription,
               let current = record(id: id) else { return }
-        fail(record: current, error: error)
+
+        let stable = persistentSourceURL(for: current)
+        if StoreDownloadStorage.isValidIPA(at: stable) { return }
+        restartDownload(record: current, reason: "انقطع التحميل · جاري الاستكمال")
     }
 
     func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
