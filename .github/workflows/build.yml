@@ -25,7 +25,25 @@ jobs:
           echo "Using local BatSign Zsign source from Vendor/Zsign"
 
       - name: Install XcodeGen
-        run: brew install xcodegen
+        run: |
+          set -euo pipefail
+          if command -v xcodegen >/dev/null 2>&1; then
+            xcodegen --version
+            exit 0
+          fi
+
+          for attempt in 1 2 3; do
+            echo "XcodeGen install attempt $attempt"
+            if brew install xcodegen; then
+              xcodegen --version
+              exit 0
+            fi
+            sleep $((attempt * 5))
+            brew update --force --quiet || true
+          done
+
+          echo "Unable to install XcodeGen after retries"
+          exit 1
 
       - name: Generate Xcode project
         run: xcodegen generate
