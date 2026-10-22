@@ -101,6 +101,13 @@ actor DirectDownloadLibrary {
                   let record = try? JSONDecoder().decode(DirectDownloadRecord.self, from: data) else { return nil }
             let fileURL = folder.appendingPathComponent(record.fileName)
             guard fm.fileExists(atPath: fileURL.path) else { return nil }
+
+            _ = AppVisibleFolders.mirrorFile(
+                from: fileURL,
+                to: AppVisibleFolders.dylib,
+                fileName: record.fileName
+            )
+
             let attrs = try? fm.attributesOfItem(atPath: fileURL.path)
             let size = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
             return DirectDownloadItem(
@@ -185,6 +192,14 @@ actor DirectDownloadLibrary {
         )
         let recordData = try JSONEncoder().encode(record)
         try recordData.write(to: folder.appendingPathComponent(recordName), options: .atomic)
+
+        guard AppVisibleFolders.mirrorFile(
+            from: destination,
+            to: AppVisibleFolders.dylib,
+            fileName: fileName
+        ) != nil else {
+            throw DirectDownloadError.writeFailed
+        }
 
         let attrs = try? fm.attributesOfItem(atPath: destination.path)
         let size = (attrs?[.size] as? NSNumber)?.int64Value ?? app.fileSize ?? 0
