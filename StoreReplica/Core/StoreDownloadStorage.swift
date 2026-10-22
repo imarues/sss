@@ -68,7 +68,10 @@ enum StoreDownloadStorage {
     }
 
     /// Take ownership of URLSession's completed file as quickly as possible.
-    /// A hard link on the app data volume is effectively instant even for multi-GB IPAs.
+    /// Moving is the normal URLSession completion handoff and is effectively
+    /// instant when the temporary file and Application Support share a volume.
+    /// If iOS places the temp file on a different volume, fall back to a hard
+    /// link and finally to a copy.
     static func stageFinishedDownload(from temporaryURL: URL, job: StoreInstallJob) throws -> URL {
         let destination = try stagedURL(for: job)
         let directory = destination.deletingLastPathComponent()
@@ -77,7 +80,6 @@ enum StoreDownloadStorage {
         if isValidIPA(at: destination), sizeIsPlausible(url: destination, expectedBytes: job.expectedBytes) {
             return destination
         }
-        // Never let an old partial file win just because it starts with the ZIP signature.
         if fm.fileExists(atPath: destination.path) {
             try? fm.removeItem(at: destination)
         }
@@ -94,11 +96,24 @@ enum StoreDownloadStorage {
         defer { try? fm.removeItem(at: incoming) }
 
         var staged = false
+
+        // URLSession explicitly hands ownership of this temporary file to the
+        // delegate for the duration of didFinishDownloadingTo. Moving it here
+        // avoids a second full write of large IPAs before signing can start.
         do {
-            try fm.linkItem(at: temporaryURL, to: incoming)
+            try fm.moveItem(at: temporaryURL, to: incoming)
             staged = true
         } catch {
-            // URLSession's temporary file may live on a different volume.
+            // Cross-volume or protection failures use the non-destructive paths below.
+        }
+
+        if !staged {
+            do {
+                try fm.linkItem(at: temporaryURL, to: incoming)
+                staged = true
+            } catch {
+                // Hard links can be refused for URLSession-managed temp files.
+            }
         }
 
         if !staged {
@@ -230,8 +245,6 @@ enum StoreDownloadStorage {
     }
 
     private static func sizeIsPlausible(url: URL, expectedBytes: Int64) -> Bool {
-        // Source metadata can be rounded or absent, so only reject an obvious partial file.
-        // A valid full package should never be less than half of a declared multi-megabyte size.
         guard expectedBytes >= 5 * 1024 * 1024 else { return true }
         guard let attrs = try? fm.attributesOfItem(atPath: url.path),
               let value = attrs[.size] as? NSNumber else { return false }
