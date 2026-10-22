@@ -28,6 +28,7 @@ enum StoreDownloadStorageError: LocalizedError {
 
 enum StoreDownloadStorage {
     private static let fm = FileManager.default
+    private static let categoryRegistryKey = "StoreDownloadStorage.categoryRegistry.v1"
 
     static var stagingRoot: URL {
         let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -36,6 +37,12 @@ enum StoreDownloadStorage {
 
     static var documentsRoot: URL {
         fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    }
+
+    static func registerVisibleCategory(for app: StoreApp) {
+        var map = (UserDefaults.standard.dictionary(forKey: categoryRegistryKey) as? [String: String]) ?? [:]
+        map[app.id] = isGame(app) ? "games" : "apps"
+        UserDefaults.standard.set(map, forKey: categoryRegistryKey)
     }
 
     static func stagedURL(for job: StoreInstallJob) throws -> URL {
@@ -51,6 +58,14 @@ enum StoreDownloadStorage {
     }
 
     static func exportedURL(for job: StoreInstallJob) throws -> URL {
+        AppVisibleFolders.ensure()
+        let map = (UserDefaults.standard.dictionary(forKey: categoryRegistryKey) as? [String: String]) ?? [:]
+        let target = map[job.appID] == "games" ? AppVisibleFolders.games : AppVisibleFolders.apps
+        try makeDirectory(target)
+        return target.appendingPathComponent(fileName(for: job), isDirectory: false)
+    }
+
+    private static func legacyExportedURL(for job: StoreInstallJob) throws -> URL {
         let folder = documentsRoot
             .appendingPathComponent(safe(job.appName, fallback: "App"), isDirectory: true)
         try makeDirectory(folder)
@@ -67,11 +82,6 @@ enum StoreDownloadStorage {
         return hasValidStagedIPA(for: job)
     }
 
-    /// Take ownership of URLSession's completed file as quickly as possible.
-    /// Moving is the normal URLSession completion handoff and is effectively
-    /// instant when the temporary file and Application Support share a volume.
-    /// If iOS places the temp file on a different volume, fall back to a hard
-    /// link and finally to a copy.
     static func stageFinishedDownload(from temporaryURL: URL, job: StoreInstallJob) throws -> URL {
         let destination = try stagedURL(for: job)
         let directory = destination.deletingLastPathComponent()
@@ -96,24 +106,16 @@ enum StoreDownloadStorage {
         defer { try? fm.removeItem(at: incoming) }
 
         var staged = false
-
-        // URLSession explicitly hands ownership of this temporary file to the
-        // delegate for the duration of didFinishDownloadingTo. Moving it here
-        // avoids a second full write of large IPAs before signing can start.
         do {
             try fm.moveItem(at: temporaryURL, to: incoming)
             staged = true
-        } catch {
-            // Cross-volume or protection failures use the non-destructive paths below.
-        }
+        } catch {}
 
         if !staged {
             do {
                 try fm.linkItem(at: temporaryURL, to: incoming)
                 staged = true
-            } catch {
-                // Hard links can be refused for URLSession-managed temp files.
-            }
+            } catch {}
         }
 
         if !staged {
@@ -165,9 +167,13 @@ enum StoreDownloadStorage {
         if isValidIPA(at: staged), sizeIsPlausible(url: staged, expectedBytes: job.expectedBytes) {
             return staged
         }
-        guard let exported = try? exportedURL(for: job),
-              isValidIPA(at: exported),
-              sizeIsPlausible(url: exported, expectedBytes: job.expectedBytes) else { return nil }
+
+        var candidates: [URL] = []
+        if let current = try? exportedURL(for: job) { candidates.append(current) }
+        if let legacy = try? legacyExportedURL(for: job) { candidates.append(legacy) }
+        guard let exported = candidates.first(where: {
+            isValidIPA(at: $0) && sizeIsPlausible(url: $0, expectedBytes: job.expectedBytes)
+        }) else { return nil }
 
         let incoming = staged.deletingLastPathComponent().appendingPathComponent(
             staged.lastPathComponent + ".legacy-" + UUID().uuidString
@@ -185,8 +191,6 @@ enum StoreDownloadStorage {
         }
     }
 
-    /// Best-effort Files export. It intentionally runs after signing so this copy
-    /// cannot make the 100%/Signing stage slower.
     @discardableResult
     static func exportToFiles(stagedURL: URL, job: StoreInstallJob) -> Bool {
         guard isValidIPA(at: stagedURL),
@@ -224,8 +228,6 @@ enum StoreDownloadStorage {
         (try? validateIPA(at: url)) != nil
     }
 
-    /// Cheap hot-path validation. Full extraction is deliberately deferred to
-    /// BatSignPackagePipeline so reaching 100% does not spend another full unzip pass.
     static func validateIPA(at url: URL) throws {
         guard fm.fileExists(atPath: url.path) else {
             throw StoreDownloadStorageError.sourceMissing
@@ -253,7 +255,8 @@ enum StoreDownloadStorage {
     }
 
     private static func jobForCacheCheck(_ app: StoreApp) -> StoreInstallJob {
-        StoreInstallJob(
+        registerVisibleCategory(for: app)
+        return StoreInstallJob(
             id: "cache-check",
             appID: app.id,
             appName: app.name,
@@ -296,5 +299,18 @@ enum StoreDownloadStorage {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty, cleaned != ".", cleaned != ".." else { return fallback }
         return String(cleaned.prefix(100))
+    }
+
+    private static func isGame(_ app: StoreApp) -> Bool {
+        let values = (app.categories ?? []).map {
+            $0.lowercased()
+                .replacingOccurrences(of: "أ", with: "ا")
+                .replacingOccurrences(of: "إ", with: "ا")
+                .replacingOccurrences(of: "آ", with: "ا")
+                .replacingOccurrences(of: " ", with: "")
+        }
+        return values.contains { value in
+            value.contains("العاب") || value == "game" || value == "games" || value.contains("gaming")
+        }
     }
 }
