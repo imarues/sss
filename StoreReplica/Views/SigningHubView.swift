@@ -294,7 +294,7 @@ struct SigningHubView: View {
         .environment(\.layoutDirection, .rightToLeft)
         .interactiveDismissDisabled(model.busy)
         .sheet(isPresented: $pickingIPA) {
-            SigningFilePicker(allowedContentTypes: [.sideloadIPA]) { urls in
+            SigningFilePicker(allowedContentTypes: [.data]) { urls in
                 pickingIPA = false
                 guard let url = urls.first else { return }
                 model.selectIPA(url)
@@ -358,8 +358,6 @@ struct SigningHubView: View {
                 .stroke(StoreTheme.surfaceBorder.opacity(0.8), lineWidth: 0.8)
         }
     }
-
-    // MARK: File
 
     private var fileSection: some View {
         VStack(spacing: 14) {
@@ -478,8 +476,6 @@ struct SigningHubView: View {
         }
     }
 
-    // MARK: Link
-
     private var linkSection: some View {
         VStack(spacing: 14) {
             VStack(alignment: .trailing, spacing: 8) {
@@ -593,8 +589,6 @@ struct SigningHubView: View {
         return formatBytes(model.downloadedBytes)
     }
 
-    // MARK: Shared controls
-
     private var copySelector: some View {
         VStack(alignment: .trailing, spacing: 10) {
             HStack {
@@ -615,14 +609,14 @@ struct SigningHubView: View {
                         Text(variant.title)
                             .font(AppFont.bold(11.5))
                             .foregroundStyle(model.copyVariant == variant ? StoreTheme.onAccent : StoreTheme.textSecondary)
-                            .frame(maxWidth: variant == .original ? 1.6 : 1)
-                            .frame(height: 36)
+                            .frame(width: variant == .original ? 76 : 42, height: 36)
                             .background(model.copyVariant == variant ? StoreTheme.accent : StoreTheme.field)
                             .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
                     }
                     .buttonStyle(.plain)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .trailing)
             .environment(\.layoutDirection, .rightToLeft)
         }
         .padding(14)
@@ -794,8 +788,6 @@ struct SigningHubView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
-    // MARK: My Apps
-
     private var myAppsSection: some View {
         VStack(spacing: 12) {
             HStack {
@@ -882,8 +874,6 @@ struct SigningHubView: View {
                 .stroke(StoreTheme.surfaceBorder.opacity(0.70), lineWidth: 0.8)
         }
     }
-
-    // MARK: Small pieces
 
     private func localIcon(data: Data?, url: URL?, size: CGFloat) -> some View {
         Group {
