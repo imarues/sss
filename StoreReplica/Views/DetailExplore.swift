@@ -79,6 +79,26 @@ struct AppDetailView: View {
         }
     }
 
+    private func openDuplicateSheet() {
+        if SigningAssetProvider.hasCredentials {
+            showDuplicate = true
+        } else {
+            SigningSetupCoordinator.shared.request {
+                showDuplicate = true
+            }
+        }
+    }
+
+    private func openDylibSheet() {
+        if SigningAssetProvider.hasCredentials {
+            showDylib = true
+        } else {
+            SigningSetupCoordinator.shared.request {
+                showDylib = true
+            }
+        }
+    }
+
     private var turathHero: some View {
         ZStack(alignment: .top) {
             heroBackdrop
@@ -125,14 +145,14 @@ struct AppDetailView: View {
                             title: "دمج ديلب مع التطبيق",
                             icon: "puzzlepiece.extension.fill"
                         ) {
-                            showDylib = true
+                            openDylibSheet()
                         }
 
                         detailActionButton(
                             title: "تكرار",
                             icon: "plus.square.on.square"
                         ) {
-                            showDuplicate = true
+                            openDuplicateSheet()
                         }
                     }
                     .environment(\.layoutDirection, .leftToRight)
@@ -494,6 +514,10 @@ private struct TurathDetailInstallButton: View {
         installer.state(for: app)
     }
 
+    private var readyLike: Bool {
+        state.phase == .ready || state.phase == .complete || state.phase == .installing
+    }
+
     private var title: String {
         switch state.phase {
         case .idle: return "تثبيت"
@@ -504,19 +528,30 @@ private struct TurathDetailInstallButton: View {
             return "تحميل"
         case .ready: return "جاهز"
         case .signing: return "توقيع"
-        case .installing: return "تثبيت"
+        case .installing: return "جاهز"
         case .complete: return "جاهز"
         case .failed: return "تثبيت"
         }
     }
 
     private var isWorking: Bool {
-        [.downloading, .signing, .installing].contains(state.phase)
+        [.downloading, .signing].contains(state.phase)
     }
 
     var body: some View {
         Button {
             TransferActivityCenter.shared.track(app)
+
+            if state.phase == .installing {
+                installer.applicationDidBecomeActive()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.15) {
+                    if installer.state(for: app).phase == .ready {
+                        installer.start(app)
+                    }
+                }
+                return
+            }
+
             if SigningAssetProvider.hasCredentials {
                 installer.start(app)
             } else {
@@ -532,7 +567,7 @@ private struct TurathDetailInstallButton: View {
                         .tint(StoreTheme.onAccent)
                         .scaleEffect(0.8)
                 } else {
-                    Image(systemName: state.phase == .complete ? "checkmark.circle.fill" : "arrow.down.square.fill")
+                    Image(systemName: readyLike ? "checkmark.circle.fill" : "arrow.down.square.fill")
                         .font(.system(size: 17, weight: .bold))
                 }
             }
@@ -540,11 +575,15 @@ private struct TurathDetailInstallButton: View {
             .frame(maxWidth: .infinity)
             .frame(height: 64)
             .background {
-                LinearGradient(
-                    colors: [StoreTheme.accent.opacity(0.86), StoreTheme.accent],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
+                if readyLike {
+                    Color.green
+                } else {
+                    LinearGradient(
+                        colors: [StoreTheme.accent.opacity(0.86), StoreTheme.accent],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                }
             }
             .clipShape(RoundedRectangle(cornerRadius: 27, style: .continuous))
         }
