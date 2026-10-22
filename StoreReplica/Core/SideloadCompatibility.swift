@@ -6,6 +6,10 @@ func + (lhs: String, rhs: Substring) -> String {
     lhs + String(rhs)
 }
 
+func + (lhs: Substring, rhs: String) -> String {
+    String(lhs) + rhs
+}
+
 extension Substring {
     func trimmingCharacters(in set: CharacterSet) -> String {
         String(self).trimmingCharacters(in: set)
