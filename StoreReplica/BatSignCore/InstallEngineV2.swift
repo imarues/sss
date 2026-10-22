@@ -44,7 +44,7 @@ enum StoreInstallError: LocalizedError {
         case .httpStatus(let status):
             return "فشل تحميل التطبيق من الخادم (HTTP \(status))."
         case .installerRejected:
-            return "تعذر فتح صفحة التثبيت المحلية. التطبيق محفوظ ويمكن إعادة المحاولة."
+            return "تعذر فتح مثبت iOS عبر GBox. التطبيق محفوظ ويمكن إعادة المحاولة."
         case .installerTimedOut:
             return "لم يبدأ iOS باستلام التطبيق. التطبيق محفوظ ويمكن إعادة المحاولة بدون تنزيله."
         case .stalePackage:
@@ -78,6 +78,7 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
     private var samples: [String: (date: Date, bytes: Int64)] = [:]
     private var rescueAttempts: [String: Int] = [:]
     private var corruptRetries: [String: Int] = [:]
+    private var downloadHolds: [String: UIBackgroundTaskIdentifier] = [:]
 
     private let signingQueue = DispatchQueue(label: "com.ikiraplus.turath.batsign.signing", qos: .userInitiated)
     private let exportQueue = DispatchQueue(label: "com.ikiraplus.turath.batsign.export", qos: .utility)
@@ -90,14 +91,29 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
     private var installTimeout: DispatchWorkItem?
     private var bootstrapped = false
 
+    /// BatSign starts user-initiated downloads with a normal/default session.
+    /// iOS gives foreground transfers the most direct scheduling path; a
+    /// background URLSession is intentionally reserved for recovery work.
     private lazy var session: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.allowsCellularAccess = true
+        config.waitsForConnectivity = true
+        config.httpMaximumConnectionsPerHost = 4
+        config.timeoutIntervalForRequest = 60
+        config.timeoutIntervalForResource = 7 * 24 * 60 * 60
+        return URLSession(configuration: config, delegate: self, delegateQueue: nil)
+    }()
+
+    /// Kept for iOS wake-up compatibility and future recovery. Normal taps do
+    /// not use this slower, OS-scheduled path.
+    private lazy var backgroundSession: URLSession = {
         let config = URLSessionConfiguration.background(
-            withIdentifier: "com.ikiraplus.turathreplica.batsign.downloads.v1"
+            withIdentifier: "com.ikiraplus.turathreplica.batsign.downloads.v2"
         )
         config.sessionSendsLaunchEvents = true
         config.isDiscretionary = false
         config.allowsCellularAccess = true
-        config.waitsForConnectivity = true
+        config.waitsForConnectivity = false
         config.httpMaximumConnectionsPerHost = 4
         config.timeoutIntervalForRequest = 60
         config.timeoutIntervalForResource = 7 * 24 * 60 * 60
@@ -117,7 +133,8 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
         guard shouldStart else { return }
 
         _ = session
-        session.getAllTasks { [weak self] tasks in
+        _ = backgroundSession
+        backgroundSession.getAllTasks { [weak self] tasks in
             guard let self else { return }
             let activeIDs = Set(tasks.compactMap(\.taskDescription))
             let known = self.snapshotJobs()
@@ -195,13 +212,9 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
     }
 
     func applicationDidBecomeActive() {
-        guard let url = pendingOpenURL, pendingInstallJob != nil else { return }
+        guard let url = pendingOpenURL, let job = pendingInstallJob else { return }
         pendingOpenURL = nil
-        UIApplication.shared.open(url, options: [:]) { [weak self] accepted in
-            if !accepted, let self, let job = self.pendingInstallJob {
-                self.fail(job: job, error: StoreInstallError.installerRejected)
-            }
-        }
+        openInstallURL(url, job: job)
     }
 
     private func beginDownload(_ job: StoreInstallJob) {
@@ -222,6 +235,7 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
             state: StoreInstallState(phase: .downloading, progress: 0, message: "جاري التحميل")
         )
         InstallLiveActivityBridge.begin(job: job)
+        beginDownloadHold(job.id)
 
         var request = URLRequest(url: url)
         request.cachePolicy = .reloadIgnoringLocalCacheData
@@ -233,6 +247,30 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
         task.resume()
     }
 
+    private func beginDownloadHold(_ id: String) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if self.downloadHolds[id] != nil { return }
+            var token: UIBackgroundTaskIdentifier = .invalid
+            token = UIApplication.shared.beginBackgroundTask(withName: "TurathDownload") { [weak self] in
+                guard let self else { return }
+                self.endDownloadHold(id)
+            }
+            if token != .invalid {
+                self.downloadHolds[id] = token
+            }
+        }
+    }
+
+    private func endDownloadHold(_ id: String) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let token = self.downloadHolds.removeValue(forKey: id) else { return }
+            if token != .invalid {
+                UIApplication.shared.endBackgroundTask(token)
+            }
+        }
+    }
+
     private func existingStagedIPA(_ job: StoreInstallJob) -> URL? {
         if StoreDownloadStorage.hasValidStagedIPA(for: job) {
             return try? StoreDownloadStorage.stagedURL(for: job)
@@ -242,27 +280,34 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
 
     private func handleFinishedDownload(_ temporaryURL: URL, jobID: String) {
         guard let job = job(jobID) else { return }
-        do {
-            let staged = try StoreDownloadStorage.stageFinishedDownload(from: temporaryURL, job: job)
-            publish(
-                appID: job.appID,
-                state: StoreInstallState(
-                    phase: .signing,
-                    progress: 0.91,
-                    message: "اكتمل التحميل · جاري تجهيز التطبيق"
-                )
-            )
-            InstallLiveActivityBridge.update(
-                job: job,
+
+        // The byte transfer is done. Change phase immediately so the UI/island
+        // never parks at 100% while the completed URLSession file is adopted.
+        publish(
+            appID: job.appID,
+            state: StoreInstallState(
                 phase: .signing,
                 progress: 0.91,
-                detail: "جاري تجهيز التطبيق",
-                force: true
+                message: "جاري تجهيز التطبيق للتوقيع"
             )
+        )
+        InstallLiveActivityBridge.update(
+            job: job,
+            phase: .signing,
+            progress: 0.91,
+            detail: "جاري تجهيز التطبيق للتوقيع",
+            force: true
+        )
+
+        do {
+            let staged = try StoreDownloadStorage.stageFinishedDownload(from: temporaryURL, job: job)
+            endDownloadHold(jobID)
             beginSigning(job: job, stagedIPA: staged, startLiveActivity: false)
         } catch StoreDownloadStorageError.sourceMissing {
+            endDownloadHold(jobID)
             rescueDownload(job)
         } catch {
+            endDownloadHold(jobID)
             fail(job: job, error: error)
         }
     }
@@ -344,8 +389,6 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
                 outputURL: output
             )
 
-            // Export the original package only after CPU/disk-heavy signing has
-            // finished. Files export is optional and never blocks installation.
             exportQueue.async {
                 _ = StoreDownloadStorage.exportToFiles(stagedURL: stagedIPA, job: job)
             }
@@ -412,8 +455,7 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
                 onReady: { [weak self] in
                     guard let self else { return }
                     guard let manifest = Self.gboxManifestURL(artifact),
-                          let itms = Self.itmsURL(manifest),
-                          let page = BatSignInstallURLBridge.bridgeURL(for: itms) else {
+                          let itms = Self.itmsURL(manifest) else {
                         self.fail(job: job, error: StoreInstallError.installerRejected)
                         return
                     }
@@ -426,9 +468,9 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
                         )
                     )
                     if UIApplication.shared.applicationState == .active {
-                        self.openInstallPage(page, job: job)
+                        self.openInstallURL(itms, job: job)
                     } else {
-                        self.pendingOpenURL = page
+                        self.pendingOpenURL = itms
                     }
                 },
                 onTransferStarted: { [weak self] in
@@ -462,8 +504,11 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
         }
     }
 
-    private func openInstallPage(_ page: URL, job: StoreInstallJob) {
-        UIApplication.shared.open(page, options: [:]) { [weak self] accepted in
+    /// BatSign opens the itms-services URL itself. This causes iOS to present
+    /// the GBox install confirmation directly instead of first taking the user
+    /// through Safari/127.0.0.1.
+    private func openInstallURL(_ url: URL, job: StoreInstallJob) {
+        UIApplication.shared.open(url, options: [:]) { [weak self] accepted in
             guard let self, self.pendingInstallJob?.id == job.id else { return }
             guard accepted else {
                 self.fail(job: job, error: StoreInstallError.installerRejected)
@@ -530,6 +575,7 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
     }
 
     private func fail(job: StoreInstallJob, error: Error) {
+        endDownloadHold(job.id)
         let text = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         let cached = StoreDownloadStorage.hasValidStagedIPA(for: job)
         if pendingInstallJob?.id == job.id { cleanupInstallAttempt(deleteSigned: true) }
@@ -605,6 +651,7 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
         rescueAttempts[id] = nil
         persistJobsLocked()
         lock.unlock()
+        endDownloadHold(id)
     }
 
     private func job(_ id: String) -> StoreInstallJob? {
@@ -637,8 +684,11 @@ extension StoreInstallCoordinator: URLSessionDownloadDelegate, URLSessionDelegat
         lock.lock()
         if let previous = samples[id] {
             let dt = now.timeIntervalSince(previous.date)
-            if dt >= 0.8 {
-                speed = Double(max(0, totalBytesWritten - previous.bytes)) / dt
+            if dt >= 1.0 {
+                let measured = Double(max(0, totalBytesWritten - previous.bytes)) / dt
+                if measured > 0 {
+                    speed = measured
+                }
                 samples[id] = (now, totalBytesWritten)
             }
         } else {
@@ -675,6 +725,7 @@ extension StoreInstallCoordinator: URLSessionDownloadDelegate, URLSessionDelegat
         guard let id = downloadTask.taskDescription, let job = job(id) else { return }
         if let response = downloadTask.response as? HTTPURLResponse,
            !(200...299).contains(response.statusCode) {
+            endDownloadHold(id)
             fail(job: job, error: StoreInstallError.httpStatus(response.statusCode))
             return
         }
@@ -685,6 +736,7 @@ extension StoreInstallCoordinator: URLSessionDownloadDelegate, URLSessionDelegat
         guard let error,
               let id = task.taskDescription,
               let job = job(id) else { return }
+        endDownloadHold(id)
         if StoreDownloadStorage.hasValidStagedIPA(for: job) { return }
         fail(job: job, error: error)
     }
