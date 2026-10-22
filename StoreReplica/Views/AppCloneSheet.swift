@@ -4,7 +4,6 @@ struct AppCloneSheet: View {
     let app: StoreApp
 
     @Environment(\.dismiss) private var dismiss
-    @ObservedObject private var center = DetailPreparationCenter.shared
     @State private var selectedNumber = 1
     @State private var useCustom = false
     @State private var customText = "15"
@@ -20,41 +19,51 @@ struct AppCloneSheet: View {
         return (1...99).contains(value)
     }
 
-    private var isBusy: Bool {
-        center.isActive(appID: app.id, kind: .duplicate)
-    }
-
     private var bundleBase: String {
         app.bundleId?.isEmpty == false ? app.bundleId! : app.id
+    }
+
+    private var duplicateApp: StoreApp {
+        let number = effectiveNumber
+        return StoreApp(
+            id: app.id + "-duplicate-" + String(number),
+            name: app.name + " " + String(number),
+            bundleId: bundleBase + String(number),
+            version: app.version,
+            buildNumber: app.buildNumber,
+            minIosVersion: app.minIosVersion,
+            fileSize: app.fileSize,
+            notes: app.notes,
+            iconUrl: app.iconUrl,
+            featured: app.featured,
+            categories: app.categories,
+            installs: app.installs,
+            updatedAt: app.updatedAt,
+            addedAt: app.addedAt,
+            versionUpdatedAt: app.versionUpdatedAt,
+            feedKind: app.feedKind,
+            downloadUrl: app.downloadUrl,
+            downloadURL: app.downloadURL
+        )
     }
 
     var body: some View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 20) {
-                dragIndicator
+                Capsule()
+                    .fill(Color.white.opacity(0.22))
+                    .frame(width: 48, height: 5)
+                    .padding(.top, 2)
+
                 header
                 intro
                 numberCard
 
-                if isBusy {
-                    progressCard
-                }
-
-                if let error = center.errorText, !error.isEmpty {
-                    errorCard(error)
-                }
-
-                Button {
-                    center.beginDuplicate(app: app, number: effectiveNumber)
-                } label: {
+                Button(action: startDuplicate) {
                     HStack(spacing: 10) {
-                        if isBusy {
-                            ProgressView().tint(StoreTheme.onAccent)
-                        } else {
-                            Image(systemName: "plus.square.on.square")
-                                .font(.system(size: 18, weight: .bold))
-                        }
-                        Text(isBusy ? "جاري تجهيز النسخة" : "تكرار وتثبيت")
+                        Image(systemName: "plus.square.on.square")
+                            .font(.system(size: 18, weight: .bold))
+                        Text("تكرار وتثبيت")
                             .font(AppFont.black(17))
                     }
                     .foregroundStyle(StoreTheme.onAccent)
@@ -64,17 +73,15 @@ struct AppCloneSheet: View {
                     .clipShape(RoundedRectangle(cornerRadius: 25, style: .continuous))
                 }
                 .buttonStyle(.plain)
-                .disabled(isBusy || !customIsValid)
-                .opacity((isBusy || !customIsValid) ? 0.62 : 1)
+                .disabled(!customIsValid)
+                .opacity(customIsValid ? 1 : 0.62)
 
-                if isBusy {
-                    Text("يمكنك إغلاق هذه الصفحة أو الخروج من التطبيق، وسيستمر التحميل وتظهر حالته في الجزيرة الديناميكية.")
-                        .font(AppFont.regular(11.5))
-                        .foregroundStyle(StoreTheme.textSecondary)
-                        .multilineTextAlignment(.center)
-                        .lineSpacing(5)
-                        .padding(.horizontal, 20)
-                }
+                Text("يتم تنزيل IPA بالطريقة الطبيعية أولاً، ثم يغيّر BatSign الباندل أثناء نفس مرحلة التوقيع. لا يتم تعديل ملف التحميل المؤقت.")
+                    .font(AppFont.regular(11.5))
+                    .foregroundStyle(StoreTheme.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(5)
+                    .padding(.horizontal, 20)
 
                 Button("إلغاء") { dismiss() }
                     .font(AppFont.bold(14))
@@ -89,26 +96,27 @@ struct AppCloneSheet: View {
         .background(StoreTheme.background.ignoresSafeArea())
         .preferredColorScheme(.dark)
         .environment(\.layoutDirection, .rightToLeft)
-        .onReceive(NotificationCenter.default.publisher(for: DetailPreparationCenter.completedNotification)) { note in
-            guard let appID = note.userInfo?["appID"] as? String,
-                  let kind = note.userInfo?["kind"] as? String,
-                  appID == app.id,
-                  kind == DetailPreparationKind.duplicate.rawValue else { return }
-            dismiss()
-        }
     }
 
-    private var dragIndicator: some View {
-        Capsule()
-            .fill(Color.white.opacity(0.22))
-            .frame(width: 48, height: 5)
-            .padding(.top, 2)
+    private func startDuplicate() {
+        guard customIsValid else { return }
+        let target = duplicateApp
+        TransferActivityCenter.shared.track(target)
+        dismiss()
+
+        // BatSign/Feather pattern: GET only downloads the original IPA. Identity
+        // overrides are carried by the signing job and applied by Zsign after the
+        // durable IPA has been adopted. Never touch URLSession's temporary file.
+        if SigningAssetProvider.hasCredentials {
+            StoreInstallCoordinator.shared.start(target)
+        } else {
+            SigningSetupCoordinator.shared.request(for: target)
+        }
     }
 
     private var header: some View {
         HStack(spacing: 16) {
             AppIconView(app: app, size: 72)
-
             VStack(alignment: .trailing, spacing: 6) {
                 Text("تكرار \(app.name)")
                     .font(AppFont.black(24))
@@ -142,10 +150,7 @@ struct AppCloneSheet: View {
                 .foregroundStyle(StoreTheme.textPrimary)
                 .frame(maxWidth: .infinity, alignment: .trailing)
 
-            LazyVGrid(
-                columns: Array(repeating: GridItem(.flexible(), spacing: 9), count: 5),
-                spacing: 10
-            ) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 9), count: 5), spacing: 10) {
                 ForEach(1...10, id: \.self) { number in
                     Button {
                         selectedNumber = number
@@ -190,7 +195,6 @@ struct AppCloneSheet: View {
                     Text("من 1 إلى 99")
                         .font(AppFont.regular(12))
                         .foregroundStyle(StoreTheme.textSecondary)
-
                     TextField("15", text: $customText)
                         .keyboardType(.numberPad)
                         .multilineTextAlignment(.center)
@@ -199,10 +203,6 @@ struct AppCloneSheet: View {
                         .frame(width: 100, height: 50)
                         .background(StoreTheme.background.opacity(0.45))
                         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .stroke(customIsValid ? StoreTheme.surfaceBorder : Color.red.opacity(0.75), lineWidth: 1)
-                        }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -217,10 +217,8 @@ struct AppCloneSheet: View {
                     .font(AppFont.bold(12.5))
                     .foregroundStyle(StoreTheme.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .trailing)
-
                 HStack(spacing: 0) {
-                    Text(bundleBase)
-                        .foregroundStyle(StoreTheme.textSecondary)
+                    Text(bundleBase).foregroundStyle(StoreTheme.textSecondary)
                     Text("\(effectiveNumber)")
                         .foregroundStyle(StoreTheme.accent)
                         .fontWeight(.bold)
@@ -248,35 +246,5 @@ struct AppCloneSheet: View {
             RoundedRectangle(cornerRadius: 25, style: .continuous)
                 .stroke(StoreTheme.surfaceBorder.opacity(0.85), lineWidth: 0.8)
         }
-    }
-
-    private var progressCard: some View {
-        VStack(spacing: 10) {
-            ProgressView(value: center.progress)
-                .tint(StoreTheme.accent)
-            HStack {
-                Text("\(Int(center.progress * 100))%")
-                    .font(AppFont.bold(11))
-                    .foregroundStyle(StoreTheme.accent)
-                Spacer()
-                Text(center.statusText.isEmpty ? "جاري التجهيز" : center.statusText)
-                    .font(AppFont.medium(12))
-                    .foregroundStyle(StoreTheme.textSecondary)
-            }
-        }
-        .padding(15)
-        .background(StoreTheme.surface.opacity(0.88))
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-    }
-
-    private func errorCard(_ text: String) -> some View {
-        Text(text)
-            .font(AppFont.medium(11.5))
-            .foregroundStyle(Color.red)
-            .multilineTextAlignment(.center)
-            .padding(13)
-            .frame(maxWidth: .infinity)
-            .background(Color.red.opacity(0.08))
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 }
