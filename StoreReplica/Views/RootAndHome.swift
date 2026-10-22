@@ -123,7 +123,7 @@ struct FloatingStoreTabBar: View {
 struct StoreHeader: View {
     @EnvironmentObject private var store: StoreViewModel
     @State private var showSettings = false
-    @State private var showSigningHub = false
+    @State private var showDownloadsCenter = false
     @ObservedObject private var installer = StoreInstallCoordinator.shared
     @ObservedObject private var detailCenter = DetailPreparationCenter.shared
     @ObservedObject private var transfers = TransferActivityCenter.shared
@@ -146,7 +146,7 @@ struct StoreHeader: View {
                 }
                 .buttonStyle(.plain)
 
-                Button { showSigningHub = true } label: {
+                Button { showDownloadsCenter = true } label: {
                     ZStack(alignment: .topTrailing) {
                         ZStack {
                             Circle().fill(StoreTheme.surface)
@@ -190,8 +190,8 @@ struct StoreHeader: View {
         .sheet(isPresented: $showSettings) {
             StoreSettingsView().environmentObject(store)
         }
-        .sheet(isPresented: $showSigningHub) {
-            SigningHubView(initialTab: .apps)
+        .sheet(isPresented: $showDownloadsCenter) {
+            DownloadsCenterView()
                 .environmentObject(store)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
