@@ -5,7 +5,7 @@ import CoreText
 
 @main
 struct TurathReplicaApp: App {
-    @UIApplicationDelegateAdaptor(StoreInstallAppDelegate.self) private var installAppDelegate
+    @UIApplicationDelegateAdaptor(TurathAppDelegate.self) private var installAppDelegate
     @StateObject private var store = StoreViewModel()
     @ObservedObject private var signingSetup = SigningSetupCoordinator.shared
 
@@ -38,6 +38,7 @@ struct TurathReplicaApp: App {
                 .task {
                     InstallLiveActivityBridge.cleanupStale()
                     StoreInstallCoordinator.shared.bootstrap()
+                    DetailPreparationCenter.shared.bootstrap()
                     await KiraPagesUpdatesService.shared.warm()
                 }
         }
