@@ -24,13 +24,20 @@ struct TurathInstallLiveActivity: Widget {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-                    ProgressView(value: max(0, min(1, context.state.progress)))
-                        .tint(.accentColor)
+                    if context.state.phase == .downloading {
+                        ProgressView(value: clamped(context.state.progress))
+                            .tint(.accentColor)
+                    }
                 }
 
-                Text(percent(context.state.progress))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                if context.state.phase == .downloading {
+                    Text(percent(context.state.progress))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                } else {
+                    Image(systemName: compactIcon(context.state.phase))
+                        .foregroundStyle(compactColor(context.state.phase))
+                }
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
@@ -42,8 +49,13 @@ struct TurathInstallLiveActivity: Widget {
                     phaseIcon(context.state.phase)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    Text(percent(context.state.progress))
-                        .font(.caption.bold().monospacedDigit())
+                    if context.state.phase == .downloading {
+                        Text(percent(context.state.progress))
+                            .font(.caption.bold().monospacedDigit())
+                    } else {
+                        Image(systemName: compactIcon(context.state.phase))
+                            .foregroundStyle(compactColor(context.state.phase))
+                    }
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(alignment: .leading, spacing: 5) {
@@ -61,26 +73,37 @@ struct TurathInstallLiveActivity: Widget {
                                     .foregroundStyle(.secondary)
                             }
                         }
-                        ProgressView(value: max(0, min(1, context.state.progress)))
-                            .tint(.accentColor)
+                        if context.state.phase == .downloading {
+                            ProgressView(value: clamped(context.state.progress))
+                                .tint(.accentColor)
+                        }
                     }
                 }
             } compactLeading: {
                 Image(systemName: compactIcon(context.state.phase))
                     .foregroundStyle(compactColor(context.state.phase))
             } compactTrailing: {
-                Text(percent(context.state.progress))
-                    .font(.caption2.bold().monospacedDigit())
+                if context.state.phase == .downloading {
+                    Text(percent(context.state.progress))
+                        .font(.caption2.bold().monospacedDigit())
+                } else {
+                    Image(systemName: compactIcon(context.state.phase))
+                        .font(.caption2.bold())
+                        .foregroundStyle(compactColor(context.state.phase))
+                }
             } minimal: {
                 ZStack {
                     Circle()
                         .stroke(Color.secondary.opacity(0.35), lineWidth: 2)
-                    Circle()
-                        .trim(from: 0, to: max(0.02, min(1, context.state.progress)))
-                        .stroke(compactColor(context.state.phase), style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
+                    if context.state.phase == .downloading {
+                        Circle()
+                            .trim(from: 0, to: max(0.02, clamped(context.state.progress)))
+                            .stroke(compactColor(context.state.phase), style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                            .rotationEffect(.degrees(-90))
+                    }
                     Image(systemName: compactIcon(context.state.phase))
                         .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(compactColor(context.state.phase))
                 }
                 .padding(2)
             }
@@ -118,15 +141,19 @@ struct TurathInstallLiveActivity: Widget {
 
     private func stageTitle(_ phase: InstallActivityAttributes.Phase) -> String {
         switch phase {
-        case .downloading: return "جاري تحميل التطبيق"
+        case .downloading: return "جاري تحميل وتجهيز التطبيق"
         case .signing: return "جاري توقيع التطبيق"
-        case .installing: return "جاري تجهيز التثبيت"
+        case .installing: return "بانتظار تأكيد iOS"
         case .complete: return "جاهز للتثبيت"
         case .failed: return "تعذر إكمال العملية"
         }
     }
 
+    private func clamped(_ progress: Double) -> Double {
+        max(0, min(1, progress))
+    }
+
     private func percent(_ progress: Double) -> String {
-        "\(Int(max(0, min(1, progress)) * 100))%"
+        "\(Int(clamped(progress) * 100))%"
     }
 }
