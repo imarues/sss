@@ -151,7 +151,7 @@ struct AppDetailView: View {
             StoreTheme.background
 
             RemoteImage(path: app.iconUrl, cornerRadius: 0)
-                .frame(width: UIScreen.main.bounds.width + 130, height: 440)
+                .frame(width: UIScreen.main.bounds.width, height: 440)
                 .scaleEffect(1.22)
                 .blur(radius: 58)
                 .saturation(1.32)
