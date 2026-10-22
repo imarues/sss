@@ -69,6 +69,7 @@ struct InstallPill: View {
     var body: some View {
         Button {
             if let app {
+                TransferActivityCenter.shared.track(app)
                 if SigningAssetProvider.hasCredentials {
                     installer.start(app)
                 } else {
@@ -147,10 +148,11 @@ struct SigningSetupSheet: View {
                         .foregroundStyle(StoreTheme.textPrimary)
                         .frame(maxWidth: .infinity, alignment: .trailing)
 
-                    Text("اختر شهادة .p12 وملف .mobileprovision ثم اكتب كلمة المرور. يتم فحص الثلاثة معًا وحفظ نسخة داخل التطبيق مثل BatSign.")
+                    Text("اختر شهادة .p12 وملف .mobileprovision ثم اكتب كلمة المرور. يتم فحص الثلاثة معًا وحفظ نسخة داخل التطبيق مثل BatSign.".storeForcedRTL)
                         .font(AppFont.regular(12))
                         .foregroundStyle(StoreTheme.textSecondary)
                         .multilineTextAlignment(.trailing)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
 
                     setupFileButton(
                         title: p12URL?.lastPathComponent ?? "اختيار شهادة .p12",
@@ -173,10 +175,11 @@ struct SigningSetupSheet: View {
                         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
 
                     if let errorMessage {
-                        Text(errorMessage)
+                        Text(errorMessage.storeForcedRTL)
                             .font(AppFont.regular(11))
                             .foregroundStyle(Color.red)
                             .frame(maxWidth: .infinity, alignment: .trailing)
+                            .multilineTextAlignment(.trailing)
                             .textSelection(.enabled)
                     }
 
@@ -213,6 +216,7 @@ struct SigningSetupSheet: View {
             }
         }
         .preferredColorScheme(.dark)
+        .environment(\.layoutDirection, .rightToLeft)
         .interactiveDismissDisabled(working)
         .sheet(isPresented: $pickingP12) {
             SigningFilePicker(allowedContentTypes: [.signingP12]) { urls in
@@ -296,9 +300,14 @@ struct SectionTitle: View {
     let title: String
     var body: some View {
         HStack(spacing: 8) {
-            Text(title).font(AppFont.black(20)).foregroundStyle(StoreTheme.textPrimary)
             Spacer(minLength: 8)
-        }.padding(.horizontal, StoreTheme.pageHorizontal)
+            Text(title.storeForcedRTL)
+                .font(AppFont.black(20))
+                .foregroundStyle(StoreTheme.textPrimary)
+                .multilineTextAlignment(.trailing)
+        }
+        .padding(.horizontal, StoreTheme.pageHorizontal)
+        .environment(\.layoutDirection, .rightToLeft)
     }
 }
 
@@ -315,20 +324,25 @@ struct AppIconView: View {
 struct BandCard: View {
     let app: StoreApp
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .trailing, spacing: 12) {
             HStack(alignment: .top, spacing: 12) {
                 AppIconView(app: app, size: 58)
                 VStack(alignment: .trailing, spacing: 5) {
-                    Text(app.name).font(AppFont.bold(15)).foregroundStyle(StoreTheme.textPrimary).lineLimit(2).frame(maxWidth: .infinity, alignment: .trailing)
-                    Text(app.categories?.first ?? "تطبيق").font(AppFont.regular(12)).foregroundStyle(StoreTheme.textSecondary).lineLimit(1)
+                    Text(app.name.storeForcedRTL).font(AppFont.bold(15)).foregroundStyle(StoreTheme.textPrimary).lineLimit(2).frame(maxWidth: .infinity, alignment: .trailing)
+                    Text((app.categories?.first ?? "تطبيق").storeForcedRTL).font(AppFont.regular(12)).foregroundStyle(StoreTheme.textSecondary).lineLimit(1).frame(maxWidth: .infinity, alignment: .trailing)
                 }
                 InstallPill(app: app)
             }
             if let notes = app.notes, !notes.isEmpty {
-                Text(notes.replacingOccurrences(of: "\n", with: " "))
-                    .font(AppFont.regular(11.5)).foregroundStyle(StoreTheme.textSecondary).lineLimit(2)
+                Text(notes.replacingOccurrences(of: "\n", with: " ").storeForcedRTL)
+                    .font(AppFont.regular(11.5))
+                    .foregroundStyle(StoreTheme.textSecondary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.trailing)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
+        .environment(\.layoutDirection, .rightToLeft)
         .padding(14).frame(width: 310, height: 126, alignment: .top).storeCard(radius: 19)
     }
 }
@@ -339,11 +353,12 @@ struct ShowcaseCard: View {
         VStack(spacing: 14) {
             AppIconView(app: app, size: 76)
             VStack(spacing: 4) {
-                Text(app.name).font(AppFont.bold(15)).foregroundStyle(StoreTheme.textPrimary).lineLimit(1)
-                Text("الإصدار \(app.version ?? "—")").font(AppFont.regular(11)).foregroundStyle(StoreTheme.textSecondary)
+                Text(app.name.storeForcedRTL).font(AppFont.bold(15)).foregroundStyle(StoreTheme.textPrimary).lineLimit(1)
+                Text("الإصدار \(app.version ?? "—")".storeForcedRTL).font(AppFont.regular(11)).foregroundStyle(StoreTheme.textSecondary)
             }
             InstallPill(app: app)
         }
+        .environment(\.layoutDirection, .rightToLeft)
         .padding(16).frame(width: 168, height: 192).storeCard(radius: 22)
     }
 }
@@ -354,11 +369,18 @@ struct LargeListRow: View {
         HStack(spacing: 12) {
             AppIconView(app: app, size: 62)
             VStack(alignment: .trailing, spacing: 5) {
-                Text(app.name).font(AppFont.bold(15)).foregroundStyle(StoreTheme.textPrimary).lineLimit(1)
-                Text(app.notes ?? "الإصدار \(app.version ?? "—")").font(AppFont.regular(11.5)).foregroundStyle(StoreTheme.textSecondary).lineLimit(2)
+                Text(app.name.storeForcedRTL).font(AppFont.bold(15)).foregroundStyle(StoreTheme.textPrimary).lineLimit(1)
+                Text((app.notes ?? "الإصدار \(app.version ?? "—")").storeForcedRTL)
+                    .font(AppFont.regular(11.5))
+                    .foregroundStyle(StoreTheme.textSecondary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.trailing)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }.frame(maxWidth: .infinity, alignment: .trailing)
             InstallPill(app: app)
-        }.padding(.vertical, 10)
+        }
+        .environment(\.layoutDirection, .rightToLeft)
+        .padding(.vertical, 10)
     }
 }
 
@@ -371,10 +393,12 @@ struct CategoryStripCard: View {
                 Text(category.emoji ?? "•").font(.system(size: 20, weight: .semibold)).foregroundStyle(StoreTheme.accent)
             }.frame(width: 43, height: 43)
             VStack(alignment: .trailing, spacing: 2) {
-                Text(category.name).font(AppFont.bold(13)).foregroundStyle(StoreTheme.textPrimary).lineLimit(1)
-                if let count = category.count { Text("\(count) تطبيق").font(AppFont.regular(10.5)).foregroundStyle(StoreTheme.textSecondary) }
+                Text(category.name.storeForcedRTL).font(AppFont.bold(13)).foregroundStyle(StoreTheme.textPrimary).lineLimit(1)
+                if let count = category.count { Text("\(count) تطبيق".storeForcedRTL).font(AppFont.regular(10.5)).foregroundStyle(StoreTheme.textSecondary) }
             }
-        }.padding(.horizontal, 12).frame(height: 65).storeCard(radius: 17)
+        }
+        .environment(\.layoutDirection, .rightToLeft)
+        .padding(.horizontal, 12).frame(height: 65).storeCard(radius: 17)
     }
 }
 
@@ -390,8 +414,10 @@ struct CategoryGridTile: View {
                 }.frame(width: 50, height: 50)
             }
             Spacer(minLength: 2)
-            Text(category.name).font(AppFont.bold(14)).foregroundStyle(StoreTheme.textPrimary).lineLimit(1)
-            if let count = category.count { Text("\(count) تطبيق").font(AppFont.regular(10.5)).foregroundStyle(StoreTheme.textSecondary) }
-        }.padding(14).frame(height: 132).storeCard(radius: 20)
+            Text(category.name.storeForcedRTL).font(AppFont.bold(14)).foregroundStyle(StoreTheme.textPrimary).lineLimit(1)
+            if let count = category.count { Text("\(count) تطبيق".storeForcedRTL).font(AppFont.regular(10.5)).foregroundStyle(StoreTheme.textSecondary) }
+        }
+        .environment(\.layoutDirection, .rightToLeft)
+        .padding(14).frame(height: 132).storeCard(radius: 20)
     }
 }
