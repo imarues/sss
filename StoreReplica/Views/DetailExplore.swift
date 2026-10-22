@@ -5,35 +5,53 @@ import CoreText
 
 struct AppDetailView: View {
     let app: StoreApp
+
     @State private var similar: [StoreApp] = []
-    @State private var extras: PackageExtras?
     @State private var reviews: ReviewsResponse?
     @State private var appleItem: AppleAppStoreItem?
     @State private var appleLookupFinished = false
+    @State private var showDuplicate = false
+    @State private var showDylib = false
+
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         ScrollView(showsIndicators: false) {
-            VStack(spacing: 22) {
-                detailHero
+            VStack(spacing: 0) {
+                turathHero
+
                 detailInfo
-                if !app.isDylibAsset { applePreviewSection }
-                if let notes = app.notes, !notes.isEmpty { notesCard(notes) }
-                if !app.isDylibAsset { extrasCard }
-                if !app.isDylibAsset { ratingCard }
-                if !app.isDylibAsset && !similar.isEmpty { similarSection }
-                Color.clear.frame(height: 28)
+                    .padding(.top, 18)
+
+                if let notes = app.notes, !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    notesSection(notes)
+                        .padding(.top, 30)
+                }
+
+                if !app.isDylibAsset {
+                    applePreviewSection
+                        .padding(.top, 28)
+                }
+
+                if !app.isDylibAsset {
+                    ratingCard
+                        .padding(.top, 26)
+                }
+
+                if !app.isDylibAsset && !similar.isEmpty {
+                    similarSection
+                        .padding(.top, 28)
+                }
+
+                Color.clear.frame(height: 34)
             }
-            .padding(.top, 12)
         }
         .background(StoreTheme.background.ignoresSafeArea())
-        .navigationTitle("")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbarColorScheme(.dark, for: .navigationBar)
+        .navigationBarBackButtonHidden(true)
+        .toolbar(.hidden, for: .navigationBar)
         .task(id: app.id) {
             if app.isDylibAsset {
                 similar = []
-                extras = nil
                 reviews = nil
                 appleItem = nil
                 appleLookupFinished = true
@@ -41,102 +59,295 @@ struct AppDetailView: View {
             }
 
             async let localSimilar: [StoreApp] = KiraPagesUpdatesService.shared.similarApps(to: app, limit: 8)
-            async let e: PackageExtras? = try? await StoreAPI.shared.extras(appId: app.id)
             async let r: ReviewsResponse? = try? await StoreAPI.shared.reviews(appId: app.id)
             async let a: AppleAppStoreItem? = AppleAppStoreLookup.shared.item(bundleID: app.bundleId ?? "")
 
             similar = await localSimilar
-            extras = await e
             reviews = await r
             appleItem = await a
             appleLookupFinished = true
         }
+        .sheet(isPresented: $showDuplicate) {
+            DetailPackageActionSheet(app: app, mode: .duplicate)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.hidden)
+        }
+        .sheet(isPresented: $showDylib) {
+            DetailPackageActionSheet(app: app, mode: .dylib)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.hidden)
+        }
     }
 
-    private var detailHero: some View {
-        VStack(spacing: 16) {
-            AppIconView(app: app, size: 112)
-            VStack(spacing: 5) {
-                Text(app.name)
-                    .font(AppFont.black(24))
-                    .foregroundStyle(StoreTheme.textPrimary)
-                    .multilineTextAlignment(.center)
-                if let bundle = app.bundleId, !bundle.isEmpty {
-                    Text(bundle)
-                        .font(AppFont.regular(11))
-                        .foregroundStyle(StoreTheme.textSecondary)
-                        .lineLimit(1)
+    private var turathHero: some View {
+        ZStack(alignment: .top) {
+            heroBackdrop
+
+            VStack(spacing: 0) {
+                detailTopBar
+                    .padding(.top, 7)
+
+                Spacer().frame(height: 70)
+
+                AppIconView(app: app, size: 118)
+                    .shadow(color: .black.opacity(0.28), radius: 18, y: 9)
+
+                VStack(spacing: 7) {
+                    Text(app.name)
+                        .font(AppFont.black(25))
+                        .foregroundStyle(StoreTheme.textPrimary)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.82)
+
+                    if let bundle = app.bundleId, !bundle.isEmpty {
+                        Text(bundle)
+                            .font(.system(size: 11.5, weight: .regular, design: .monospaced))
+                            .foregroundStyle(StoreTheme.textSecondary)
+                            .lineLimit(1)
+                    }
                 }
-            }
-            if app.isDylibAsset {
-                DirectDownloadButton(app: app)
-            } else {
-                InstallPill(title: "تثبيت", app: app)
+                .padding(.horizontal, 24)
+                .padding(.top, 21)
+
+                if app.isDylibAsset {
+                    DirectDownloadButton(app: app)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 28)
+                } else {
+                    TurathDetailInstallButton(app: app)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 28)
+
+                    HStack(spacing: 12) {
+                        detailActionButton(
+                            title: "دمج ديلب مع التطبيق",
+                            icon: "puzzlepiece.extension.fill"
+                        ) {
+                            showDylib = true
+                        }
+
+                        detailActionButton(
+                            title: "تكرار",
+                            icon: "plus.square.on.square"
+                        ) {
+                            showDuplicate = true
+                        }
+                    }
+                    .environment(\.layoutDirection, .leftToRight)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+                }
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 16)
+        .frame(minHeight: app.isDylibAsset ? 460 : 525)
+        .clipped()
+    }
+
+    private var heroBackdrop: some View {
+        ZStack {
+            StoreTheme.background
+
+            RemoteImage(path: app.iconUrl, cornerRadius: 80)
+                .frame(width: 410, height: 410)
+                .scaleEffect(1.32)
+                .blur(radius: 62)
+                .opacity(0.52)
+                .offset(y: -38)
+
+            RadialGradient(
+                colors: [Color.white.opacity(0.07), Color.clear],
+                center: .top,
+                startRadius: 12,
+                endRadius: 330
+            )
+
+            LinearGradient(
+                colors: [
+                    Color.black.opacity(0.10),
+                    StoreTheme.background.opacity(0.22),
+                    StoreTheme.background.opacity(0.78),
+                    StoreTheme.background
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        }
+        .ignoresSafeArea(edges: .top)
+    }
+
+    private var detailTopBar: some View {
+        ZStack {
+            Text(app.name)
+                .font(AppFont.bold(17))
+                .foregroundStyle(StoreTheme.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.78)
+                .padding(.horizontal, 126)
+
+            HStack(spacing: 10) {
+                categoryBadge
+
+                Spacer(minLength: 8)
+
+                Button {
+                    dismiss()
+                } label: {
+                    HStack(spacing: 7) {
+                        Text("رجوع")
+                            .font(AppFont.medium(15))
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 21, weight: .semibold))
+                    }
+                    .foregroundStyle(StoreTheme.accent)
+                }
+                .buttonStyle(.plain)
+                .environment(\.layoutDirection, .rightToLeft)
+            }
+            .environment(\.layoutDirection, .leftToRight)
+        }
+        .frame(height: 54)
+        .padding(.horizontal, 16)
+    }
+
+    private var categoryBadge: some View {
+        HStack(spacing: 8) {
+            Text(app.primaryCategoryName)
+                .font(AppFont.bold(12))
+                .foregroundStyle(StoreTheme.accent)
+                .lineLimit(1)
+
+            Image(systemName: "square.stack.3d.up.fill")
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(StoreTheme.accent)
+        }
+        .padding(.horizontal, 13)
+        .frame(height: 40)
+        .background(StoreTheme.accent.opacity(0.11))
+        .clipShape(Capsule())
+        .overlay {
+            Capsule()
+                .stroke(StoreTheme.accent.opacity(0.10), lineWidth: 0.8)
+        }
+        .environment(\.layoutDirection, .rightToLeft)
+    }
+
+    private func detailActionButton(title: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Text(title)
+                    .font(AppFont.black(14))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+                Image(systemName: icon)
+                    .font(.system(size: 16, weight: .bold))
+            }
+            .foregroundStyle(StoreTheme.textPrimary)
+            .frame(maxWidth: .infinity)
+            .frame(height: 54)
+            .background(StoreTheme.surface.opacity(0.86))
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .stroke(StoreTheme.surfaceBorder.opacity(0.92), lineWidth: 0.9)
+            }
+        }
+        .buttonStyle(.plain)
+        .environment(\.layoutDirection, .rightToLeft)
     }
 
     private var detailInfo: some View {
         HStack(spacing: 0) {
-            metric("الإصدار", app.version ?? "—")
+            metric("آخر تحديث", formattedUpdateDate)
             divider
             metric("الحجم", app.fileSize.map(formatBytes) ?? "—")
             divider
-            metric("التصنيف", app.primaryCategoryName)
+            metric("الإصدار", app.version ?? "—")
         }
-        .padding(.vertical, 15)
-        .storeCard(radius: 18)
-        .padding(.horizontal, StoreTheme.pageHorizontal)
+        .environment(\.layoutDirection, .leftToRight)
+        .padding(.vertical, 18)
+        .background(StoreTheme.surface.opacity(0.88))
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(StoreTheme.surfaceBorder.opacity(0.50), lineWidth: 0.7)
+        }
+        .padding(.horizontal, 16)
     }
 
     private var divider: some View {
-        Rectangle().fill(StoreTheme.surfaceBorder).frame(width: 1, height: 38)
+        Rectangle()
+            .fill(StoreTheme.surfaceBorder.opacity(0.95))
+            .frame(width: 1, height: 48)
     }
 
     private func metric(_ title: String, _ value: String) -> some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 7) {
             Text(value)
-                .font(AppFont.bold(13))
+                .font(AppFont.black(13.5))
                 .foregroundStyle(StoreTheme.textPrimary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.72)
+                .minimumScaleFactor(0.66)
+
             Text(title)
                 .font(AppFont.regular(10.5))
                 .foregroundStyle(StoreTheme.textSecondary)
         }
         .frame(maxWidth: .infinity)
+        .environment(\.layoutDirection, .rightToLeft)
+    }
+
+    private func notesSection(_ notes: String) -> some View {
+        VStack(alignment: .trailing, spacing: 15) {
+            Text(app.isDylibAsset ? "وصف الملف" : "وصف التطبيق")
+                .font(AppFont.black(20))
+                .foregroundStyle(StoreTheme.textPrimary)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+
+            Text(notes)
+                .font(AppFont.regular(14))
+                .foregroundStyle(StoreTheme.textSecondary)
+                .lineSpacing(9)
+                .multilineTextAlignment(.trailing)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .padding(.horizontal, 18)
+        .environment(\.layoutDirection, .rightToLeft)
     }
 
     @ViewBuilder
     private var applePreviewSection: some View {
         if let screenshots = appleItem?.screenshots, !screenshots.isEmpty {
-            VStack(spacing: 12) {
+            VStack(spacing: 14) {
                 HStack {
                     Text("من App Store")
-                        .font(AppFont.regular(10.5))
+                        .font(AppFont.regular(11))
                         .foregroundStyle(StoreTheme.textSecondary)
                     Spacer()
                     Text("معاينات")
-                        .font(AppFont.black(18))
+                        .font(AppFont.black(20))
                         .foregroundStyle(StoreTheme.textPrimary)
                 }
-                .padding(.horizontal, StoreTheme.pageHorizontal)
+                .padding(.horizontal, 18)
+                .environment(\.layoutDirection, .leftToRight)
 
                 ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(spacing: 11) {
+                    LazyHStack(spacing: 12) {
                         ForEach(Array(screenshots.enumerated()), id: \.offset) { _, url in
                             AppleScreenshotCard(url: url)
                         }
                     }
-                    .padding(.horizontal, StoreTheme.pageHorizontal)
+                    .padding(.horizontal, 18)
                 }
             }
             .transition(.opacity)
         } else if !appleLookupFinished, let bundle = app.bundleId, !bundle.isEmpty {
             HStack(spacing: 10) {
-                ProgressView().tint(StoreTheme.accent).scaleEffect(0.85)
+                ProgressView()
+                    .tint(StoreTheme.accent)
+                    .scaleEffect(0.85)
                 Text("جاري البحث عن معاينات App Store…")
                     .font(AppFont.regular(11))
                     .foregroundStyle(StoreTheme.textSecondary)
@@ -146,98 +357,85 @@ struct AppDetailView: View {
         }
     }
 
-    private func notesCard(_ notes: String) -> some View {
-        VStack(alignment: .trailing, spacing: 12) {
-            Text(app.isDylibAsset ? "وصف الملف" : "وصف التطبيق")
-                .font(AppFont.black(17))
-                .foregroundStyle(StoreTheme.textPrimary)
-            Text(notes)
-                .font(AppFont.regular(13))
-                .foregroundStyle(StoreTheme.textSecondary)
-                .frame(maxWidth: .infinity, alignment: .trailing)
-        }
-        .padding(16)
-        .storeCard()
-        .padding(.horizontal, StoreTheme.pageHorizontal)
-    }
-
-    @ViewBuilder
-    private var extrasCard: some View {
-        if let extras {
-            VStack(spacing: 0) {
-                optionRow(icon: "square.on.square", title: "نسخ التطبيق", enabled: extras.allowDuplicate == true)
-                Divider().overlay(StoreTheme.surfaceBorder)
-                optionRow(icon: "shippingbox.fill", title: "إضافة Dylib", enabled: extras.allowDylibs == true)
-                Divider().overlay(StoreTheme.surfaceBorder)
-                optionRow(icon: "checkmark.shield.fill", title: "الاحتفاظ بالملف التعريفي", enabled: extras.keepProfile == true)
-            }
-            .padding(.horizontal, 14)
-            .storeCard()
-            .padding(.horizontal, StoreTheme.pageHorizontal)
-        }
-    }
-
-    private func optionRow(icon: String, title: String, enabled: Bool) -> some View {
-        HStack {
-            Image(systemName: enabled ? "checkmark.circle.fill" : "circle")
-                .foregroundStyle(enabled ? StoreTheme.accent : StoreTheme.tabInactive)
-            Spacer()
-            Text(title).font(AppFont.medium(13)).foregroundStyle(StoreTheme.textPrimary)
-            Image(systemName: icon).foregroundStyle(StoreTheme.textSecondary)
-        }
-        .frame(height: 48)
-    }
-
     @ViewBuilder
     private var ratingCard: some View {
-        if let reviews {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(String(format: "%.1f", reviews.average ?? 0))
-                        .font(AppFont.black(28))
-                        .foregroundStyle(StoreTheme.textPrimary)
-                    Text("من \(reviews.count ?? 0) تقييم")
-                        .font(AppFont.regular(10))
-                        .foregroundStyle(StoreTheme.textSecondary)
-                }
-                Spacer()
-                HStack(spacing: 3) {
-                    ForEach(0..<5, id: \.self) { _ in
-                        Image(systemName: "star.fill")
-                            .font(.system(size: 13))
-                            .foregroundStyle(StoreTheme.badgeUpdated)
+        if let reviews,
+           reviews.enabled != false,
+           (reviews.count ?? 0) > 0,
+           (reviews.average ?? 0) > 0 {
+            VStack(spacing: 12) {
+                Text("التقييم")
+                    .font(AppFont.black(20))
+                    .foregroundStyle(StoreTheme.textPrimary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(String(format: "%.1f", reviews.average ?? 0))
+                            .font(AppFont.black(29))
+                            .foregroundStyle(StoreTheme.textPrimary)
+                        Text("من \(reviews.count ?? 0) تقييم")
+                            .font(AppFont.regular(10.5))
+                            .foregroundStyle(StoreTheme.textSecondary)
+                    }
+
+                    Spacer()
+
+                    HStack(spacing: 4) {
+                        ForEach(0..<5, id: \.self) { _ in
+                            Image(systemName: "star.fill")
+                                .font(.system(size: 14))
+                                .foregroundStyle(StoreTheme.badgeUpdated)
+                        }
                     }
                 }
+                .padding(17)
+                .storeCard(radius: 20)
             }
-            .padding(16)
-            .storeCard()
-            .padding(.horizontal, StoreTheme.pageHorizontal)
-        } else if let rating = appleItem?.rating {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(String(format: "%.1f", rating))
-                        .font(AppFont.black(28))
-                        .foregroundStyle(StoreTheme.textPrimary)
-                    Text("App Store · \(appleItem?.ratingCount ?? 0) تقييم")
-                        .font(AppFont.regular(10))
-                        .foregroundStyle(StoreTheme.textSecondary)
+            .padding(.horizontal, 18)
+        } else if let rating = appleItem?.rating,
+                  rating > 0,
+                  (appleItem?.ratingCount ?? 0) > 0 {
+            VStack(spacing: 12) {
+                Text("التقييم")
+                    .font(AppFont.black(20))
+                    .foregroundStyle(StoreTheme.textPrimary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(String(format: "%.1f", rating))
+                            .font(AppFont.black(29))
+                            .foregroundStyle(StoreTheme.textPrimary)
+                        Text("App Store · \(appleItem?.ratingCount ?? 0) تقييم")
+                            .font(AppFont.regular(10.5))
+                            .foregroundStyle(StoreTheme.textSecondary)
+                    }
+
+                    Spacer()
+
+                    Image(systemName: "star.fill")
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundStyle(StoreTheme.badgeUpdated)
                 }
-                Spacer()
-                Image(systemName: "star.fill")
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundStyle(StoreTheme.badgeUpdated)
+                .padding(17)
+                .storeCard(radius: 20)
             }
-            .padding(16)
-            .storeCard()
-            .padding(.horizontal, StoreTheme.pageHorizontal)
+            .padding(.horizontal, 18)
         }
     }
 
     private var similarSection: some View {
-        VStack(spacing: 12) {
-            SectionTitle(title: app.isGameAsset ? "الألعاب المتشابهة" : "التطبيقات المتشابهة")
+        VStack(spacing: 14) {
+            Text(app.isGameAsset ? "الألعاب المتشابهة" : "التطبيقات المتشابهة")
+                .font(AppFont.black(20))
+                .foregroundStyle(StoreTheme.textPrimary)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.horizontal, 18)
+                .environment(\.layoutDirection, .rightToLeft)
+
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
+                LazyHStack(spacing: 12) {
                     ForEach(similar.prefix(8)) { candidate in
                         NavigationLink(destination: AppDetailView(app: candidate)) {
                             ShowcaseCard(app: candidate)
@@ -245,13 +443,132 @@ struct AppDetailView: View {
                         .buttonStyle(.plain)
                     }
                 }
-                .padding(.horizontal, StoreTheme.pageHorizontal)
+                .padding(.horizontal, 18)
             }
         }
     }
 
+    private var formattedUpdateDate: String {
+        let raw = [app.versionUpdatedAt, app.updatedAt, app.addedAt]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty }
+
+        guard let raw else { return "—" }
+
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+
+        var date = iso.date(from: raw)
+        if date == nil {
+            iso.formatOptions = [.withInternetDateTime]
+            date = iso.date(from: raw)
+        }
+        if date == nil {
+            let simple = DateFormatter()
+            simple.locale = Locale(identifier: "en_US_POSIX")
+            simple.dateFormat = "yyyy-MM-dd"
+            date = simple.date(from: String(raw.prefix(10)))
+        }
+
+        guard let date else { return String(raw.prefix(10)) }
+
+        let output = DateFormatter()
+        output.locale = Locale(identifier: "ar_IQ")
+        output.calendar = Calendar(identifier: .gregorian)
+        output.dateFormat = "d MMMM yyyy"
+        return output.string(from: date)
+    }
+
     private func formatBytes(_ value: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: value, countStyle: .file)
+    }
+}
+
+private struct TurathDetailInstallButton: View {
+    let app: StoreApp
+
+    @ObservedObject private var installer = StoreInstallCoordinator.shared
+    @State private var installErrorMessage: String?
+
+    private var state: StoreInstallState {
+        installer.state(for: app)
+    }
+
+    private var title: String {
+        switch state.phase {
+        case .idle: return "تثبيت"
+        case .downloading:
+            if state.progress > 0 {
+                return "\(Int((state.progress / 0.90) * 100))%"
+            }
+            return "تحميل"
+        case .ready: return "جاهز"
+        case .signing: return "توقيع"
+        case .installing: return "تثبيت"
+        case .complete: return "جاهز"
+        case .failed: return "تثبيت"
+        }
+    }
+
+    private var isWorking: Bool {
+        [.downloading, .signing, .installing].contains(state.phase)
+    }
+
+    var body: some View {
+        Button {
+            if SigningAssetProvider.hasCredentials {
+                installer.start(app)
+            } else {
+                SigningSetupCoordinator.shared.request(for: app)
+            }
+        } label: {
+            HStack(spacing: 9) {
+                Text(title)
+                    .font(AppFont.black(17))
+
+                if isWorking {
+                    ProgressView()
+                        .tint(StoreTheme.onAccent)
+                        .scaleEffect(0.8)
+                } else {
+                    Image(systemName: state.phase == .complete ? "checkmark.circle.fill" : "arrow.down.square.fill")
+                        .font(.system(size: 17, weight: .bold))
+                }
+            }
+            .foregroundStyle(StoreTheme.onAccent)
+            .frame(maxWidth: .infinity)
+            .frame(height: 64)
+            .background {
+                LinearGradient(
+                    colors: [StoreTheme.accent.opacity(0.86), StoreTheme.accent],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 27, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(isWorking)
+        .onChange(of: state) { newState in
+            if let error = newState.errorMessage, !error.isEmpty {
+                installErrorMessage = error
+            } else if newState.phase == .failed {
+                installErrorMessage = newState.message ?? "تعذر إكمال عملية التثبيت."
+            }
+        }
+        .alert(
+            "تعذر التثبيت",
+            isPresented: Binding(
+                get: { installErrorMessage != nil },
+                set: { if !$0 { installErrorMessage = nil } }
+            )
+        ) {
+            Button("حسنًا", role: .cancel) {
+                installErrorMessage = nil
+            }
+        } message: {
+            Text(installErrorMessage ?? "")
+        }
     }
 }
 
