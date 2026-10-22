@@ -31,6 +31,7 @@ struct TurathReplicaApp: App {
                 ) {
                     SigningSetupSheet {
                         if let app = signingSetup.consumePendingApp() {
+                            TransferActivityCenter.shared.track(app)
                             StoreInstallCoordinator.shared.start(app)
                         }
                     }
@@ -39,6 +40,7 @@ struct TurathReplicaApp: App {
                     InstallLiveActivityBridge.cleanupStale()
                     StoreInstallCoordinator.shared.bootstrap()
                     DetailPreparationCenter.shared.bootstrap()
+                    TransferActivityCenter.shared.bootstrap()
                     await KiraPagesUpdatesService.shared.warm()
                 }
         }
