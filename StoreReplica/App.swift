@@ -30,10 +30,7 @@ struct TurathReplicaApp: App {
                     onDismiss: { signingSetup.cancel() }
                 ) {
                     SigningSetupSheet {
-                        if let app = signingSetup.consumePendingApp() {
-                            TransferActivityCenter.shared.track(app)
-                            StoreInstallCoordinator.shared.start(app)
-                        }
+                        signingSetup.completeAfterSetup()
                     }
                 }
                 .task {
