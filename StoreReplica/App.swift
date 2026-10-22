@@ -11,6 +11,7 @@ struct TurathReplicaApp: App {
 
     init() {
         FontLoader.registerBundledPingAR()
+        AppVisibleFolders.bootstrap()
         UINavigationBar.appearance().largeTitleTextAttributes = [.foregroundColor: UIColor.white]
         UINavigationBar.appearance().titleTextAttributes = [.foregroundColor: UIColor.white]
 
