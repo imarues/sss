@@ -236,6 +236,7 @@ final class SigningHubViewModel: ObservableObject {
                     self.metadata = result.metadata
                     self.statusText = "جاهز للتوقيع والتثبيت"
                     self.refreshLibrary()
+                    TransferActivityCenter.shared.track(result.app)
 
                     if SigningAssetProvider.hasCredentials {
                         StoreInstallCoordinator.shared.start(result.app)
@@ -258,9 +259,15 @@ struct SigningHubView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var model = SigningHubViewModel()
     @ObservedObject private var installer = StoreInstallCoordinator.shared
+    @ObservedObject private var detailCenter = DetailPreparationCenter.shared
+    @ObservedObject private var transfers = TransferActivityCenter.shared
     @State private var pickingIPA = false
     @State private var pickingDylib = false
     @State private var showDylibSection = false
+
+    private var activeTransferCount: Int {
+        transfers.activeCount(using: installer, detail: detailCenter)
+    }
 
     var body: some View {
         NavigationStack {
@@ -318,11 +325,17 @@ struct SigningHubView: View {
             }
             .ignoresSafeArea()
         }
-        .onAppear { model.refreshLibrary() }
+        .onAppear {
+            TransferActivityCenter.shared.bootstrap()
+            model.refreshLibrary()
+        }
         .onChange(of: model.selectedTab) { tab in
             if tab == .apps { model.refreshLibrary() }
         }
         .onReceive(NotificationCenter.default.publisher(for: DirectDownloadLibrary.changedNotification)) { _ in
+            model.refreshLibrary()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: DetailPreparationCenter.completedNotification)) { _ in
             model.refreshLibrary()
         }
     }
@@ -348,13 +361,27 @@ struct SigningHubView: View {
                         model.selectedTab = tab
                     }
                 } label: {
-                    Text(tab.rawValue)
-                        .font(AppFont.bold(12))
-                        .foregroundStyle(model.selectedTab == tab ? StoreTheme.onAccent : StoreTheme.textSecondary)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 38)
-                        .background(model.selectedTab == tab ? StoreTheme.accent : Color.clear)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    ZStack(alignment: .topTrailing) {
+                        Text(tab.rawValue)
+                            .font(AppFont.bold(12))
+                            .foregroundStyle(model.selectedTab == tab ? StoreTheme.onAccent : StoreTheme.textSecondary)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 38)
+
+                        if tab == .apps && activeTransferCount > 0 {
+                            Text(activeTransferCount > 99 ? "99+" : "\(activeTransferCount)")
+                                .font(.system(size: activeTransferCount > 99 ? 7 : 8.5, weight: .bold))
+                                .foregroundStyle(.white)
+                                .frame(minWidth: 17, minHeight: 17)
+                                .padding(.horizontal, activeTransferCount > 9 ? 2 : 0)
+                                .background(Color.red)
+                                .clipShape(Capsule())
+                                .overlay(Capsule().stroke(StoreTheme.surface, lineWidth: 1.5))
+                                .offset(x: 2, y: -5)
+                        }
+                    }
+                    .background(model.selectedTab == tab ? StoreTheme.accent : Color.clear)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
                 .buttonStyle(.plain)
             }
@@ -811,13 +838,17 @@ struct SigningHubView: View {
                     Text("تنزيلاتي")
                         .font(AppFont.black(19))
                         .foregroundStyle(StoreTheme.textPrimary)
-                    Text("التطبيقات وملفات الديلب المحمّلة")
+                    Text(activeTransferCount > 0 ? "تابع العمليات الجارية والملفات المحمّلة" : "التطبيقات وملفات الديلب المحمّلة")
                         .font(AppFont.regular(10.5))
                         .foregroundStyle(StoreTheme.textSecondary)
                 }
             }
 
-            if model.libraryItems.isEmpty && model.directDownloads.isEmpty {
+            if activeTransferCount > 0 {
+                ActiveTransfersInlineView()
+            }
+
+            if model.libraryItems.isEmpty && model.directDownloads.isEmpty && activeTransferCount == 0 {
                 VStack(spacing: 10) {
                     Image(systemName: "square.stack.3d.up.slash")
                         .font(.system(size: 31, weight: .semibold))
@@ -834,7 +865,7 @@ struct SigningHubView: View {
                 .padding(.vertical, 38)
                 .background(StoreTheme.surface)
                 .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            } else {
+            } else if !model.libraryItems.isEmpty || !model.directDownloads.isEmpty {
                 LazyVStack(spacing: 10) {
                     ForEach(model.directDownloads) { item in
                         directDownloadRow(item)
