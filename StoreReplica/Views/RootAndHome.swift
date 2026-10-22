@@ -82,7 +82,7 @@ struct MainStoreShell: View {
                 case .explore: ExploreView()
                 case .updates: LiveUpdatesView()
                 case .shop: ShopView()
-                case .search: SearchView()
+                case .search: SearchFastView()
                 }
             }.padding(.bottom, 84)
             FloatingStoreTabBar(selected: $selected)
