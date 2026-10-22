@@ -3,7 +3,7 @@ name: Build IPA
 on:
   workflow_dispatch:
   push:
-    branches: [main, batsign-backend-port, batsign-root-fix, download-engine-root-fix]
+    branches: [main, batsign-backend-port, batsign-root-fix, download-engine-root-fix, feature/turath-signing-hub]
 
 jobs:
   build:
