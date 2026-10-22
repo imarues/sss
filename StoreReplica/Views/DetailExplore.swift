@@ -302,30 +302,19 @@ struct AppDetailView: View {
     }
 
     private func notesSection(_ notes: String) -> some View {
-        VStack(alignment: .trailing, spacing: 14) {
+        VStack(alignment: .leading, spacing: 14) {
             Text(app.isDylibAsset ? "وصف الملف" : "وصف التطبيق")
                 .font(AppFont.black(20))
                 .foregroundStyle(StoreTheme.textPrimary)
-                .frame(maxWidth: .infinity, alignment: .trailing)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text(rtlDescription(notes))
-                .font(AppFont.regular(14))
-                .foregroundStyle(StoreTheme.textSecondary)
-                .lineSpacing(9)
-                .multilineTextAlignment(.trailing)
-                .frame(maxWidth: .infinity, alignment: .trailing)
+            RTLDescriptionText(text: notes, fontSize: 14, lineSpacing: 9)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(maxWidth: .infinity, alignment: .trailing)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 18)
         .environment(\.layoutDirection, .rightToLeft)
-    }
-
-    private func rtlDescription(_ value: String) -> String {
-        value
-            .components(separatedBy: "\n")
-            .map { "\u{200F}" + $0 }
-            .joined(separator: "\n")
     }
 
     @ViewBuilder
@@ -527,6 +516,7 @@ private struct TurathDetailInstallButton: View {
 
     var body: some View {
         Button {
+            TransferActivityCenter.shared.track(app)
             if SigningAssetProvider.hasCredentials {
                 installer.start(app)
             } else {
