@@ -361,12 +361,14 @@ struct SigningHubView: View {
                         model.selectedTab = tab
                     }
                 } label: {
-                    ZStack(alignment: .topTrailing) {
+                    ZStack(alignment: .topLeading) {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(model.selectedTab == tab ? StoreTheme.accent : Color.clear)
+
                         Text(tab.rawValue)
                             .font(AppFont.bold(12))
                             .foregroundStyle(model.selectedTab == tab ? StoreTheme.onAccent : StoreTheme.textSecondary)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 38)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                         if tab == .apps && activeTransferCount > 0 {
                             Text(activeTransferCount > 99 ? "99+" : "\(activeTransferCount)")
@@ -376,12 +378,13 @@ struct SigningHubView: View {
                                 .padding(.horizontal, activeTransferCount > 9 ? 2 : 0)
                                 .background(Color.red)
                                 .clipShape(Capsule())
-                                .overlay(Capsule().stroke(StoreTheme.surface, lineWidth: 1.5))
-                                .offset(x: 2, y: -5)
+                                .overlay(Capsule().stroke(model.selectedTab == tab ? StoreTheme.accent : StoreTheme.surface, lineWidth: 1.5))
+                                .padding(.top, 3)
+                                .padding(.leading, 4)
                         }
                     }
-                    .background(model.selectedTab == tab ? StoreTheme.accent : Color.clear)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 38)
                 }
                 .buttonStyle(.plain)
             }
