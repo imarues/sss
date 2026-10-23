@@ -141,11 +141,33 @@ struct IPAHomeSections: View {
             }.padding(.horizontal, StoreTheme.pageHorizontal)
             LazyVStack(spacing: 12) {
                 ForEach(Array(apps.prefix(5).enumerated()), id: \.element.id) { index, app in
-                    NavigationLink(destination: AppDetailView(app: app)) {
-                        IPAGlowAppCard(app: app, index: index, showsBundle: showsBundle, showsDate: showsDate)
-                    }.buttonStyle(.plain)
+                    IPAGlowAppRow(app: app, index: index, showsBundle: showsBundle, showsDate: showsDate)
                 }
             }.padding(.horizontal, StoreTheme.pageHorizontal)
+        }
+    }
+}
+
+
+private struct IPAGlowAppRow: View {
+    let app: StoreApp
+    let index: Int
+    let showsBundle: Bool
+    let showsDate: Bool
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            NavigationLink(destination: AppDetailView(app: app)) {
+                IPAGlowAppCard(app: app, index: index, showsBundle: showsBundle, showsDate: showsDate)
+            }
+            .buttonStyle(.plain)
+            // Sibling of the navigation link: tapping the heart updates favorites,
+            // never accidentally opens the details screen.
+            if !app.isDylibAsset {
+                StoreFavoriteButton(app: app)
+                    .padding(.trailing, 92)
+                    .padding(.top, 68)
+            }
         }
     }
 }
@@ -232,8 +254,7 @@ private struct IPAGlowAppCard: View {
                         .font(AppFont.medium(11)).foregroundStyle(.white.opacity(0.64))
                         .lineLimit(1)
                     if !app.isDylibAsset {
-                        StoreFavoriteButton(app: app)
-                            .frame(maxWidth: .infinity, alignment: .trailing)
+                        Color.clear.frame(height: 36)
                     }
                     Text([app.version.map { "v" + $0 }, sizeText].compactMap { $0 }.joined(separator: " · "))
                         .font(AppFont.medium(11)).foregroundStyle(.white.opacity(0.69))
@@ -255,7 +276,7 @@ private struct IPAGlowAppCard: View {
             }
             .padding(16)
         }
-        .frame(height: 164)
+        .frame(height: 184)
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 24).stroke(.white.opacity(0.10), lineWidth: 0.8))
         .shadow(color: glow.opacity(0.10), radius: 8, y: 4)
