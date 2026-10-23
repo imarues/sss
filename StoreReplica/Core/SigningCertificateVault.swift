@@ -6,9 +6,25 @@ struct StoredSigningCertificate: Codable, Identifiable {
     let id: String
     let name: String
     let profileUUID: String
+    let certificateSHA256: String?
     let expiresAt: Date
     let udids: [String]
     let importedAt: Date
+
+    var displayName: String {
+        let original = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prefixes = [
+            "iPhone Distribution:", "Apple Distribution:",
+            "iOS Distribution:", "iPhone Developer:",
+            "Apple Development:", "iOS Development:"
+        ]
+        for prefix in prefixes where original.range(of: prefix, options: [.anchored, .caseInsensitive]) != nil {
+            let remainder = String(original.dropFirst(prefix.count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !remainder.isEmpty { return remainder }
+        }
+        return original
+    }
 
     var isValid: Bool { expiresAt > Date() }
     var daysRemaining: Int { max(0, Int(ceil(expiresAt.timeIntervalSinceNow / 86_400))) }
@@ -52,7 +68,11 @@ final class SigningCertificateVault: ObservableObject {
         guard SigningAssetProvider.hasP12File && SigningAssetProvider.hasProvisionFile,
               let credentials = try? SigningAssetProvider.credentials(),
               let details = try? SigningAssetProvider.details(credentials: credentials) else { return }
-        if let existing = certificates.first(where: { $0.profileUUID == details.profileUUID }) {
+        if let existing = certificates.first(where: {
+            $0.profileUUID == details.profileUUID &&
+            ($0.certificateSHA256 == details.certificateSHA256 ||
+             ($0.certificateSHA256 == nil && $0.name == details.name))
+        }) {
             if activeID != existing.id {
                 activeID = existing.id
                 persistIndex()
@@ -67,14 +87,43 @@ final class SigningCertificateVault: ObservableObject {
     }
 
     func add(p12URL: URL, profileURL: URL, password: String) async throws {
-        // The existing signer validates certificate/profile matching and its password.
-        // This also keeps the most recently imported certificate active for signing.
-        try await Task.detached(priority: .userInitiated) {
-            try SigningAssetProvider.importCertificate(p12URL: p12URL, profileURL: profileURL, password: password)
+        // Never overwrite the active P12 while simply inspecting a new one.
+        let inspected = try await Task.detached(priority: .userInitiated) {
+            try SigningAssetProvider.inspectCertificate(
+                p12URL: p12URL, profileURL: profileURL, password: password
+            )
         }.value
-        let credentials = try SigningAssetProvider.credentials()
-        let details = try SigningAssetProvider.details(credentials: credentials)
-        try archive(credentials: credentials, details: details)
+
+        if let existing = certificates.first(where: {
+            $0.profileUUID == inspected.details.profileUUID &&
+            $0.certificateSHA256 == inspected.details.certificateSHA256
+        }) {
+            try await activate(existing)
+            return
+        }
+
+        // Archive and Keychain must succeed before the signing engine switches
+        // identity. If activation fails, discard the new archive only.
+        let record = try storeArchive(
+            p12Data: inspected.p12Data, provisionData: inspected.provisionData,
+            password: password, details: inspected.details
+        )
+        do {
+            try await Task.detached(priority: .userInitiated) {
+                try SigningAssetProvider.activateArchive(
+                    p12Data: inspected.p12Data,
+                    provisionData: inspected.provisionData,
+                    password: password
+                )
+            }.value
+        } catch {
+            try? FileManager.default.removeItem(at: folder(for: record.id))
+            deletePassword(id: record.id)
+            throw error
+        }
+        certificates.insert(record, at: 0)
+        activeID = record.id
+        persistIndex()
     }
 
     func activate(_ certificate: StoredSigningCertificate) async throws {
@@ -105,31 +154,47 @@ final class SigningCertificateVault: ObservableObject {
 
     private func archive(credentials: SigningAssetProvider.Credentials,
                          details: SigningAssetProvider.CertificateDetails) throws {
+        let record = try storeArchive(
+            p12Data: Data(contentsOf: credentials.p12),
+            provisionData: Data(contentsOf: credentials.mobileProvision),
+            password: credentials.password, details: details
+        )
+        certificates.insert(record, at: 0)
+        activeID = record.id
+        persistIndex()
+    }
+
+    private func storeArchive(
+        p12Data: Data, provisionData: Data, password: String,
+        details: SigningAssetProvider.CertificateDetails
+    ) throws -> StoredSigningCertificate {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let id = UUID().uuidString
         let path = folder(for: id)
         try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true)
         do {
-            try Data(contentsOf: credentials.p12).write(
+            try p12Data.write(
                 to: path.appendingPathComponent("certificate.p12"),
                 options: [.atomic, .completeFileProtectionUnlessOpen]
             )
-            try Data(contentsOf: credentials.mobileProvision).write(
+            try provisionData.write(
                 to: path.appendingPathComponent("certificate.mobileprovision"),
                 options: [.atomic, .completeFileProtectionUnlessOpen]
             )
-            try savePassword(credentials.password, id: id)
+            try savePassword(password, id: id)
         } catch {
             try? FileManager.default.removeItem(at: path)
+            deletePassword(id: id)
             throw error
         }
-        let record = StoredSigningCertificate(
-            id: id, name: details.name, profileUUID: details.profileUUID,
-            expiresAt: details.expiration, udids: details.provisionedUDIDs, importedAt: Date()
+        return StoredSigningCertificate(
+            id: id, name: details.name,
+            profileUUID: details.profileUUID,
+            certificateSHA256: details.certificateSHA256,
+            expiresAt: details.expiration,
+            udids: details.provisionedUDIDs,
+            importedAt: Date()
         )
-        certificates.insert(record, at: 0)
-        activeID = id
-        persistIndex()
     }
 
     private func loadIndex() {
