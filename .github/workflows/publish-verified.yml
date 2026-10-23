@@ -1,0 +1,120 @@
+name: Publish verified Alturath IPA
+
+# Releases require actual iPhone testing of the same commit's unsigned IPA.
+# A successful compilation alone is deliberately NOT a release gate.
+on:
+  workflow_dispatch:
+    inputs:
+      tested_sha:
+        description: "Full 40-character SHA of the build tested on an iPhone"
+        required: true
+        type: string
+      certificates_verified:
+        description: "Tested multiple P12/mobileprovision imports, selection and expiry"
+        required: true
+        type: boolean
+        default: false
+      favorites_verified:
+        description: "Tested detail-screen heart and separate favorites view"
+        required: true
+        type: boolean
+        default: false
+      language_verified:
+        description: "Tested Arabic, English and correct text direction"
+        required: true
+        type: boolean
+        default: false
+      signing_verified:
+        description: "Tested signing and installation with a valid certificate"
+        required: true
+        type: boolean
+        default: false
+
+concurrency:
+  group: alturath-versioned-releases
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TESTED_SHA: ${{ inputs.tested_sha }}
+      CERTIFICATES_OK: ${{ inputs.certificates_verified }}
+      FAVORITES_OK: ${{ inputs.favorites_verified }}
+      LANGUAGE_OK: ${{ inputs.language_verified }}
+      SIGNING_OK: ${{ inputs.signing_verified }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Gate release on confirmed device functionality
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TESTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Invalid tested commit SHA"; exit 1; }
+          for passed in "$CERTIFICATES_OK" "$FAVORITES_OK" "$LANGUAGE_OK" "$SIGNING_OK"; do
+            [[ "$passed" == true ]] || {
+              echo "::error::All real-device functional checks must be confirmed before publishing."
+              exit 1
+            }
+          done
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          [[ "$ACTUAL_SHA" == "$TESTED_SHA" ]] || {
+            echo "::error::The tested build SHA is not the current selected source SHA."
+            exit 1
+          }
+
+      - name: Retrieve successful artifact for tested commit only
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUN_ID="$(gh api -X GET "repos/${GITHUB_REPOSITORY}/actions/workflows/build.yml/runs" \
+            -f head_sha="$TESTED_SHA" -f status=completed -f per_page=100 \
+            --jq '.workflow_runs[] | select(.conclusion == "success") | .id' | head -n 1)"
+          [[ -n "$RUN_ID" ]] || { echo "::error::No successful Build IPA workflow exists for this SHA"; exit 1; }
+          mkdir -p dist
+          gh run download "$RUN_ID" --name TurathReplica-unsigned --dir dist
+          IPA="dist/TurathReplica-unsigned.ipa"
+          test -s "$IPA"
+          unzip -tq "$IPA"
+          unzip -Z1 "$IPA" | grep -Fqx 'Payload/TurathReplica.app/Info.plist'
+          unzip -Z1 "$IPA" | grep -Fqx 'Payload/TurathReplica.app/TurathReplica'
+          echo "IPA_SOURCE=$IPA" >> "$GITHUB_ENV"
+          echo "IPA_SHA256=$(sha256sum "$IPA" | awk '{print $1}')" >> "$GITHUB_ENV"
+          echo "Validated GitHub Actions build run: $RUN_ID" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish next sequential alturath-N release
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXISTING="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            --jq '.[] | .tag_name + " " + .target_commitish')"
+          if printf '%s\n' "$EXISTING" | grep -Eq "^alturath-[0-9]+ $TESTED_SHA$"; then
+            echo "::error::This exact source commit has already been released."
+            exit 1
+          fi
+          CURRENT_MAX="$(printf '%s\n' "$EXISTING" \
+            | sed -nE 's/^alturath-([0-9]+) .*/\1/p' | sort -nr | head -n 1)"
+          NUMBER=$((${CURRENT_MAX:-0} + 1))
+          TAG="alturath-$NUMBER"
+          cp "$IPA_SOURCE" "dist/$TAG.ipa"
+          cat > release-notes.md <<EOF
+          Tested iPhone build of commit \`$TESTED_SHA\`.
+
+          Verified before publication: multiple certificates and selection; favorites; Arabic/English UI and layout; signing/installing.
+
+          SHA-256: \`$IPA_SHA256\`
+
+          The IPA is unsigned, as built by the repository's signing workflow, and needs your own valid signing identity for installation.
+          EOF
+          gh release create "$TAG" "dist/$TAG.ipa" \
+            --target "$TESTED_SHA" \
+            --title "$TAG" \
+            --notes-file release-notes.md \
+            --latest
+          echo "Published $TAG" >> "$GITHUB_STEP_SUMMARY"
