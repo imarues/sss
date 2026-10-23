@@ -44,7 +44,7 @@ struct SigningCertificateManagerView: View {
                         Button { addCertificate() } label: {
                             HStack(spacing: 8) {
                                 if working { ProgressView().tint(.white) }
-                                Text(working ? "جاري فحص الشهادة..." : "إدراج الشهادة")
+                                Text(StoreLanguage.localized(working ? "جاري فحص الشهادة..." : "إدراج الشهادة"))
                                     .font(AppFont.bold(15))
                             }
                             .foregroundStyle(.white)
@@ -55,7 +55,7 @@ struct SigningCertificateManagerView: View {
                         .opacity(working || p12URL == nil || provisionURL == nil || password.isEmpty ? 0.5 : 1)
 
                         if let message {
-                            Text(message)
+                            Text(StoreLanguage.localized(message))
                                 .font(AppFont.medium(12))
                                 .foregroundStyle(.orange)
                                 .frame(maxWidth: .infinity, alignment: .trailing)
@@ -108,7 +108,7 @@ struct SigningCertificateManagerView: View {
                 Image(systemName: filename == nil ? icon : "checkmark.seal.fill")
                     .font(.system(size: 25))
                     .foregroundStyle(StoreTheme.accent)
-                Text(filename ?? title)
+                Text(StoreLanguage.localized(filename ?? title))
                     .font(AppFont.medium(11))
                     .foregroundStyle(StoreTheme.textPrimary)
                     .lineLimit(2)
@@ -162,7 +162,7 @@ struct SigningCertificateManagerView: View {
                     .font(AppFont.medium(12))
                     .foregroundStyle(.white.opacity(0.72))
                 Spacer()
-                Text(certificate.isValid ? "\(certificate.daysRemaining) يوم متبقي" : "منتهية الصلاحية")
+                Text(certificate.isValid ? "\(certificate.daysRemaining) " + StoreLanguage.localized("يوم متبقي") : StoreLanguage.localized("منتهية الصلاحية"))
                     .font(AppFont.bold(12))
                     .foregroundStyle(certificate.isValid ? Color.green : Color.red)
             }
