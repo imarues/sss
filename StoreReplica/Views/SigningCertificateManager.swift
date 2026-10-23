@@ -131,7 +131,7 @@ struct SigningCertificateManagerView: View {
                 }
                 Spacer(minLength: 8)
                 VStack(alignment: .trailing, spacing: 5) {
-                    Text(certificate.name)
+                    Text(certificate.displayName)
                         .font(AppFont.bold(16))
                         .foregroundStyle(.white)
                         .multilineTextAlignment(.trailing)
