@@ -138,11 +138,15 @@ actor KiraSourceSearchService {
     static let shared = KiraSourceSearchService()
 
     private let appsURL = URL(string: "https://ikiraplus.pages.dev/IPA-AR.json")!
+    // The public classifier mirrors the same source into this PUBLIC repo.
+    private let exploreSnapshotURL = URL(string: "https://raw.githubusercontent.com/imarues/sss/main/data/IPA-AR.json")!
     private let dylibsURL = URL(string: "https://ikiraplus.pages.dev/deb-AR.json")!
     private var cachedApps: [StoreApp] = []
     private var cachedIPAApps: [StoreApp] = []
     private var cachedDylibs: [StoreApp] = []
     private var cachedAt: Date?
+    private var cachedExploreIPA: [StoreApp] = []
+    private var cachedExploreAt: Date?
 
     func catalog(force: Bool = false) async throws -> [StoreApp] {
         if !force,
@@ -166,6 +170,28 @@ actor KiraSourceSearchService {
         cachedDylibs = dylibs
         cachedAt = Date()
         return combined
+    }
+
+    // Explore fetches only IPA apps, preferring the public mirror created by
+    // public GitHub Actions. If the new mirror has not deployed yet, the
+    // existing read-only IPA-AR URL remains a safe fallback.
+    func exploreApps(force: Bool = false) async throws -> [StoreApp] {
+        if !force, let cachedExploreAt,
+           Date().timeIntervalSince(cachedExploreAt) < 300,
+           !cachedExploreIPA.isEmpty {
+            return cachedExploreIPA
+        }
+        let raw: Data
+        do {
+            raw = try await Self.fetch(exploreSnapshotURL, force: force)
+        } catch {
+            raw = try await Self.fetch(appsURL, force: force)
+        }
+        let apps = try JSONDecoder().decode(KiraSearchSource.self, from: raw).apps.map(\.storeApp)
+        guard !apps.isEmpty else { throw StoreAPIError.invalidResponse }
+        cachedExploreIPA = apps
+        cachedExploreAt = Date()
+        return apps
     }
 
     func homeCollections(force: Bool = false) async throws -> (apps: [StoreApp], dylibs: [StoreApp]) {
