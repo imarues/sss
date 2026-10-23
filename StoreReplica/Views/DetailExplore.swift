@@ -236,7 +236,7 @@ struct AppDetailView: View {
 
     private var categoryBadge: some View {
         HStack(spacing: 8) {
-            Text(app.primaryCategoryName)
+            Text(StoreLanguage.localized(app.primaryCategoryName))
                 .font(AppFont.bold(12))
                 .foregroundStyle(StoreTheme.accent)
                 .lineLimit(1)
@@ -259,7 +259,7 @@ struct AppDetailView: View {
     private func detailActionButton(title: String, icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 8) {
-                Text(title)
+                Text(StoreLanguage.localized(title))
                     .font(AppFont.black(14))
                     .lineLimit(1)
                     .minimumScaleFactor(0.76)
@@ -313,7 +313,7 @@ struct AppDetailView: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.64)
 
-            Text(title)
+            Text(StoreLanguage.localized(title))
                 .font(AppFont.regular(10.5))
                 .foregroundStyle(StoreTheme.textSecondary)
         }
@@ -323,7 +323,7 @@ struct AppDetailView: View {
 
     private func notesSection(_ notes: String) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(app.isDylibAsset ? "وصف الملف" : "وصف التطبيق")
+            Text(StoreLanguage.localized(app.isDylibAsset ? "وصف الملف" : "وصف التطبيق"))
                 .font(AppFont.black(20))
                 .foregroundStyle(StoreTheme.textPrimary)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -447,7 +447,7 @@ struct AppDetailView: View {
 
     private var similarSection: some View {
         VStack(spacing: 14) {
-            Text(app.isGameAsset ? "الألعاب المتشابهة" : "التطبيقات المتشابهة")
+            Text(StoreLanguage.localized(app.isGameAsset ? "الألعاب المتشابهة" : "التطبيقات المتشابهة"))
                 .font(AppFont.black(20))
                 .foregroundStyle(StoreTheme.textPrimary)
                 .frame(maxWidth: .infinity, alignment: .trailing)
@@ -559,7 +559,7 @@ private struct TurathDetailInstallButton: View {
             }
         } label: {
             HStack(spacing: 9) {
-                Text(title)
+                Text(StoreLanguage.localized(title))
                     .font(AppFont.black(17))
 
                 if isWorking {
