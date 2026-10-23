@@ -93,6 +93,9 @@ final class SigningCertificateVault: ObservableObject {
     }
 
     func delete(_ certificate: StoredSigningCertificate) {
+        if activeID == certificate.id {
+            SigningAssetProvider.clearActiveCertificate()
+        }
         try? FileManager.default.removeItem(at: folder(for: certificate.id))
         deletePassword(id: certificate.id)
         certificates.removeAll(where: { $0.id == certificate.id })
