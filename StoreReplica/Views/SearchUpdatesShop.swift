@@ -76,7 +76,7 @@ struct SearchView: View {
                     Text("ابحث في كيرا بلس")
                         .font(AppFont.black(26))
                         .foregroundStyle(.white)
-                    Text("\(sourceCatalog.count.formatted()) عنصر من IPA-AR و deb-AR")
+                    Text("\(sourceCatalog.count.formatted()) " + StoreLanguage.localized("عنصر من IPA-AR و deb-AR"))
                         .font(AppFont.regular(12))
                         .foregroundStyle(.white.opacity(0.72))
                 }
@@ -578,7 +578,7 @@ struct StoreSettingsView: View {
         HStack {
             Text(value).font(AppFont.regular(11)).foregroundStyle(StoreTheme.textSecondary)
             Spacer()
-            Text(title).font(AppFont.medium(13)).foregroundStyle(StoreTheme.textPrimary)
+            Text(StoreLanguage.localized(title)).font(AppFont.medium(13)).foregroundStyle(StoreTheme.textPrimary)
             Image(systemName: icon).foregroundStyle(StoreTheme.accent).frame(width: 24)
         }
         .frame(height: 48)
