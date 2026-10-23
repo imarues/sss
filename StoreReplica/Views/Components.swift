@@ -330,6 +330,7 @@ struct BandCard: View {
                 VStack(alignment: .trailing, spacing: 5) {
                     Text(app.name.storeForcedRTL).font(AppFont.bold(15)).foregroundStyle(StoreTheme.textPrimary).lineLimit(2).frame(maxWidth: .infinity, alignment: .trailing)
                     Text((app.categories?.first ?? "تطبيق").storeForcedRTL).font(AppFont.regular(12)).foregroundStyle(StoreTheme.textSecondary).lineLimit(1).frame(maxWidth: .infinity, alignment: .trailing)
+                    if !app.isDylibAsset { StoreFavoriteButton(app: app).frame(maxWidth: .infinity, alignment: .trailing) }
                 }
                 InstallPill(app: app)
             }
@@ -343,7 +344,7 @@ struct BandCard: View {
             }
         }
         .environment(\.layoutDirection, .rightToLeft)
-        .padding(14).frame(width: 310, height: 126, alignment: .top).storeCard(radius: 19)
+        .padding(14).frame(width: 310, height: 166, alignment: .top).storeCard(radius: 19)
     }
 }
 
@@ -355,12 +356,13 @@ struct ShowcaseCard: View {
             VStack(spacing: 4) {
                 Text(app.name.storeForcedRTL).font(AppFont.bold(15)).foregroundStyle(StoreTheme.textPrimary).lineLimit(1)
                 Text("الإصدار \(app.version ?? "—")".storeForcedRTL).font(AppFont.regular(11)).foregroundStyle(StoreTheme.textSecondary)
+                Text((app.categories?.first ?? "تطبيق").storeForcedRTL).font(AppFont.regular(10)).foregroundStyle(StoreTheme.textSecondary)
             }
             if !app.isDylibAsset { StoreFavoriteButton(app: app) }
             InstallPill(app: app)
         }
         .environment(\.layoutDirection, .rightToLeft)
-        .padding(16).frame(width: 168, height: 192).storeCard(radius: 22)
+        .padding(16).frame(width: 168, height: 228).storeCard(radius: 22)
     }
 }
 
@@ -371,6 +373,8 @@ struct LargeListRow: View {
             AppIconView(app: app, size: 62)
             VStack(alignment: .trailing, spacing: 5) {
                 Text(app.name.storeForcedRTL).font(AppFont.bold(15)).foregroundStyle(StoreTheme.textPrimary).lineLimit(1)
+                Text((app.categories?.first ?? "تطبيق").storeForcedRTL).font(AppFont.regular(10.5)).foregroundStyle(StoreTheme.textSecondary)
+                if !app.isDylibAsset { StoreFavoriteButton(app: app).frame(maxWidth: .infinity, alignment: .trailing) }
                 Text((app.notes ?? "الإصدار \(app.version ?? "—")").storeForcedRTL)
                     .font(AppFont.regular(11.5))
                     .foregroundStyle(StoreTheme.textSecondary)
