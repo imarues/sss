@@ -369,11 +369,10 @@ struct StoreSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var certificateVault = SigningCertificateVault.shared
     @AppStorage("store.favoriteIDs") private var favoriteIDs = ""
-    @AppStorage("store.favoriteAppsJSON") private var favoriteAppsJSON = ""
     @AppStorage("store.language") private var selectedLanguage = "ar"
-    @State private var favoriteApps: [StoreApp] = []
-    @State private var selectedFavorite: StoreApp?
     @State private var showCertificates = false
+    @State private var showFavorites = false
+    @State private var showLanguagePicker = false
 
     var body: some View {
         ZStack {
@@ -395,16 +394,26 @@ struct StoreSettingsView: View {
                         Divider().overlay(StoreTheme.surfaceBorder)
                         settingRow("نمط التصميم", "Night", "moon.stars.fill")
                         Divider().overlay(StoreTheme.surfaceBorder)
-                        HStack {
-                            Picker("لغة المتجر", selection: $selectedLanguage) {
-                                Text("العربية").tag("ar")
-                                Text("English").tag("en")
+                        Button { showLanguagePicker = true } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: "chevron.left")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(StoreTheme.textSecondary)
+                                Text(selectedLanguage == "en" ? "English" : "العربية")
+                                    .font(AppFont.medium(13))
+                                    .foregroundStyle(StoreTheme.accent)
+                                    .environment(\.layoutDirection, .leftToRight)
+                                Spacer()
+                                Text("لغة المتجر")
+                                    .font(AppFont.medium(13))
+                                    .foregroundStyle(StoreTheme.textPrimary)
+                                Image(systemName: "globe")
+                                    .foregroundStyle(StoreTheme.accent)
+                                    .frame(width: 24)
                             }
-                            .pickerStyle(.menu)
-                            Spacer()
-                            Text("لغة المتجر").font(AppFont.medium(13)).foregroundStyle(StoreTheme.textPrimary)
-                            Image(systemName: "globe").foregroundStyle(StoreTheme.accent).frame(width: 24)
-                        }.frame(height: 48)
+                            .frame(height: 48)
+                        }
+                        .buttonStyle(.plain)
                     }
                     .padding(.horizontal, 14)
                     .storeCard()
@@ -415,15 +424,16 @@ struct StoreSettingsView: View {
         .sheet(isPresented: $showCertificates) {
             SigningCertificateManagerView()
         }
-        .sheet(item: $selectedFavorite) { app in
-            NavigationStack { AppDetailView(app: app) }
+        .sheet(isPresented: $showFavorites) {
+            StoreFavoritesView()
+                .presentationDetents([.large])
         }
-        .task {
-            certificateVault.refresh()
-            if let home = try? await KiraSourceSearchService.shared.homeCollections() {
-                favoriteApps = home.apps
-            }
+        .sheet(isPresented: $showLanguagePicker) {
+            languageSelection
+                .presentationDetents([.height(245)])
+                .presentationDragIndicator(.visible)
         }
+        .task { certificateVault.refresh() }
     }
 
     private var certificateManagerRow: some View {
@@ -433,7 +443,7 @@ struct StoreSettingsView: View {
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(StoreTheme.textSecondary)
                 if let active = certificateVault.active {
-                    Text(active.name).font(AppFont.medium(11))
+                    Text(active.displayName).font(AppFont.medium(11))
                         .foregroundStyle(StoreTheme.textSecondary)
                         .lineLimit(1)
                 }
@@ -456,59 +466,70 @@ struct StoreSettingsView: View {
     }
 
     private var favoritesSection: some View {
-        let ids = favoriteIDs.split(separator: "\n").map(String.init)
-        let locallySaved = favoriteAppsJSON.data(using: .utf8)
-            .flatMap { try? JSONDecoder().decode([StoreApp].self, from: $0) } ?? []
-        let catalog = Dictionary((favoriteApps + locallySaved).map { ($0.id, $0) },
-                                 uniquingKeysWith: { first, _ in first })
-        let favorites = ids.compactMap { catalog[$0] }.filter { !$0.isDylibAsset }
-        return VStack(alignment: .trailing, spacing: 12) {
-            HStack {
-                Text("\(favorites.count)/25")
-                    .font(AppFont.medium(12)).foregroundStyle(StoreTheme.textSecondary)
-                Spacer()
-                Text("المفضلة").font(AppFont.bold(18)).foregroundStyle(StoreTheme.textPrimary)
-                Image(systemName: "heart.fill").foregroundStyle(.red)
-            }
-            if favorites.isEmpty {
-                Text("اضغط القلب أسفل تصنيف أي تطبيق أو لعبة لإضافتها هنا")
+        let count = min(25, favoriteIDs.split(separator: "\n").count)
+        return Button { showFavorites = true } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(StoreTheme.textSecondary)
+                Text("\(count)/25")
                     .font(AppFont.medium(12))
                     .foregroundStyle(StoreTheme.textSecondary)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-            } else {
-                LazyVStack(spacing: 10) {
-                    ForEach(favorites) { app in
-                        HStack(spacing: 10) {
-                            StoreFavoriteButton(app: app)
-                            Button { selectedFavorite = app } label: {
-                                HStack(spacing: 10) {
-                                    VStack(alignment: .trailing, spacing: 3) {
-                                        Text(app.name)
-                                            .font(AppFont.bold(13))
-                                            .foregroundStyle(.white).lineLimit(1)
-                                        Text(app.categories?.first ?? "تطبيق")
-                                            .font(AppFont.medium(10))
-                                            .foregroundStyle(.white.opacity(0.58))
-                                    }
-                                    .frame(maxWidth: .infinity, alignment: .trailing)
-                                    AppIconView(app: app, size: 49)
-                                }
-                            }.buttonStyle(.plain)
-                        }
-                        .padding(11)
-                        .background(
-                            LinearGradient(colors: [StoreTheme.accent.opacity(0.28),
-                                                    StoreTheme.surface],
-                                           startPoint: .topLeading, endPoint: .bottomTrailing),
-                            in: RoundedRectangle(cornerRadius: 17)
-                        )
-                        .overlay(RoundedRectangle(cornerRadius: 17).stroke(.white.opacity(0.07)))
-                    }
+                Spacer()
+                Text("المفضلة")
+                    .font(AppFont.bold(17))
+                    .foregroundStyle(StoreTheme.textPrimary)
+                Image(systemName: "heart.fill")
+                    .font(.system(size: 21))
+                    .foregroundStyle(Color.red)
+            }
+            .padding(16)
+            .storeCard(radius: 21)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var languageSelection: some View {
+        NavigationStack {
+            VStack(spacing: 12) {
+                Text("لغة المتجر")
+                    .font(AppFont.black(19))
+                    .foregroundStyle(StoreTheme.textPrimary)
+                    .padding(.bottom, 6)
+
+                languageChoice("العربية", code: "ar")
+                languageChoice("English", code: "en")
+                Spacer(minLength: 0)
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity)
+            .background(StoreTheme.background.ignoresSafeArea())
+        }
+        // Explicit LTR for language names fixes iOS' mirrored menu labels.
+        .environment(\.layoutDirection, .leftToRight)
+        .preferredColorScheme(.dark)
+    }
+
+    private func languageChoice(_ name: String, code: String) -> some View {
+        Button {
+            selectedLanguage = code
+            showLanguagePicker = false
+        } label: {
+            HStack {
+                Text(name)
+                    .font(AppFont.bold(15))
+                    .foregroundStyle(StoreTheme.textPrimary)
+                Spacer()
+                if selectedLanguage == code {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(StoreTheme.accent)
                 }
             }
+            .padding(13)
+            .frame(maxWidth: .infinity)
+            .background(StoreTheme.surface, in: RoundedRectangle(cornerRadius: 15))
         }
-        .padding(16)
-        .storeCard(radius: 21)
+        .buttonStyle(.plain)
     }
 
     private var ticket: some View {
