@@ -38,6 +38,15 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
     private var record: DetailPreparationRecord?
     private var preparingRecordID: String?
     private var downloadRecoveryAttempts: [String: Int] = [:]
+    private var rescueTasks: [String: URLSessionDataTask] = [:]
+    private var rescueFiles: [String: (URL, FileHandle, Int64, Int64)] = [:]
+
+    private lazy var rescueSession: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.allowsCellularAccess = true
+        config.timeoutIntervalForResource = 7 * 24 * 60 * 60
+        return URLSession(configuration: config, delegate: self, delegateQueue: nil)
+    }()
 
     private lazy var session: URLSession = {
         let config = URLSessionConfiguration.background(withIdentifier: Self.backgroundSessionIdentifier)
@@ -207,13 +216,37 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
         downloadRecoveryAttempts[record.id] = attempts + 1
         lock.unlock()
 
-        guard attempts < 2 else {
+        guard attempts == 0 else {
             fail(record: record, error: error)
             return
         }
-        publishProgress(0.02, text: "جاري استعادة تحميل IPA", record: record)
+
+        // Xxx's rescue design: URLSessionDataTask streams bytes straight into
+        // an app-owned file, bypassing the reclaimable download-task temp file.
+        guard let raw = record.app.effectiveDownloadURL,
+              let url = URL(string: raw),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "https" || scheme == "http",
+              let destination = try? StoreDownloadStorage.stagedURL(for: sourceJob(for: record)) else {
+            fail(record: record, error: SideloadSigningError.invalidURL)
+            return
+        }
         do {
-            try startDownload(record: record)
+            let partial = destination.appendingPathExtension("rescue-" + record.id)
+            try fm.createDirectory(at: partial.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? fm.removeItem(at: partial)
+            guard fm.createFile(atPath: partial.path, contents: nil) else {
+                throw StoreDownloadStorageError.cannotStage
+            }
+            let handle = try FileHandle(forWritingTo: partial)
+            let task = rescueSession.dataTask(with: url)
+            lock.lock()
+            rescueTasks[record.id] = task
+            rescueFiles[record.id] = (partial, handle, 0, 0)
+            lock.unlock()
+            publishProgress(0.02, text: "جاري استعادة IPA وحفظه مباشرة", record: record)
+            task.taskDescription = record.id
+            task.resume()
         } catch {
             fail(record: record, error: error)
         }
@@ -583,6 +616,10 @@ extension DetailPreparationCenter: URLSessionDownloadDelegate, URLSessionDelegat
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if task is URLSessionDataTask, let id = task.taskDescription {
+            finishRescue(id: id, error: error)
+            return
+        }
         guard let error,
               let id = task.taskDescription,
               let current = record(id: id) else { return }
@@ -596,6 +633,86 @@ extension DetailPreparationCenter: URLSessionDownloadDelegate, URLSessionDelegat
         }
 
         retrySourceDownload(record: current, error: error)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+    ) {
+        guard let id = dataTask.taskDescription, record(id: id) != nil else {
+            completionHandler(.cancel)
+            return
+        }
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            completionHandler(.cancel)
+            finishRescue(id: id, error: SideloadSigningError.httpStatus(http.statusCode))
+            return
+        }
+        lock.lock()
+        if let entry = rescueFiles[id] {
+            rescueFiles[id] = (entry.0, entry.1, entry.2, max(0, response.expectedContentLength))
+        }
+        lock.unlock()
+        completionHandler(.allow)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        guard let id = dataTask.taskDescription else { return }
+        lock.lock()
+        guard let entry = rescueFiles[id] else {
+            lock.unlock()
+            return
+        }
+        do {
+            try entry.1.write(contentsOf: data)
+            rescueFiles[id] = (entry.0, entry.1, entry.2 + Int64(data.count), entry.3)
+            let fraction = entry.3 > 0 ? Double(entry.2 + Int64(data.count)) / Double(entry.3) : 0
+            lock.unlock()
+            if let current = record(id: id) {
+                publishProgress(min(0.52, fraction * 0.52), text: "جاري حفظ IPA مباشرة", record: current)
+            }
+        } catch {
+            lock.unlock()
+            finishRescue(id: id, error: error)
+            dataTask.cancel()
+        }
+    }
+
+    private func finishRescue(id: String, error: Error?) {
+        lock.lock()
+        let entry = rescueFiles.removeValue(forKey: id)
+        rescueTasks.removeValue(forKey: id)
+        lock.unlock()
+        guard let entry else { return }
+        try? entry.1.close()
+        guard let current = record(id: id) else {
+            try? fm.removeItem(at: entry.0)
+            return
+        }
+        if let error {
+            try? fm.removeItem(at: entry.0)
+            fail(record: current, error: error)
+            return
+        }
+        if entry.3 > 0 && entry.2 < entry.3 {
+            try? fm.removeItem(at: entry.0)
+            fail(record: current, error: StoreDownloadStorageError.truncatedFile)
+            return
+        }
+        do {
+            let staged = try StoreDownloadStorage.stageFinishedDownload(
+                from: entry.0,
+                job: sourceJob(for: current)
+            )
+            try? fm.removeItem(at: entry.0)
+            _ = StoreDownloadStorage.exportToFiles(stagedURL: staged, job: sourceJob(for: current))
+            prepare(record: current, sourceIPA: staged)
+        } catch {
+            try? fm.removeItem(at: entry.0)
+            fail(record: current, error: error)
+        }
     }
 
     func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
