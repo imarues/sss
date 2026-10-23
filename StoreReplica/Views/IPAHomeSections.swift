@@ -8,6 +8,9 @@ final class IPAHomeCollections: ObservableObject {
     @Published var apps: [StoreApp] = []
     @Published var dylibs: [StoreApp] = []
     @Published var loaded = false
+    @Published private(set) var categories: [StoreCategory] = []
+    @Published private(set) var recommended: [StoreApp] = []
+    @Published private(set) var recentlyAdded: [StoreApp] = []
     @Published var error: String?
 
     func refresh() async {
@@ -15,6 +18,9 @@ final class IPAHomeCollections: ObservableObject {
             let source = try await KiraSourceSearchService.shared.homeCollections()
             apps = source.apps
             dylibs = source.dylibs
+            categories = Self.makeCategories(source.apps)
+            recommended = source.apps.filter { $0.featured == true }
+            recentlyAdded = Self.makeRecentlyAdded(source.apps)
             error = nil
         } catch {
             self.error = "تعذر تحميل الفئات من المصدر"
@@ -22,7 +28,7 @@ final class IPAHomeCollections: ObservableObject {
         loaded = true
     }
 
-    var categories: [StoreCategory] {
+    private static func makeCategories(_ apps: [StoreApp]) -> [StoreCategory] {
         var groups: [String: [StoreApp]] = [:]
         var order: [String] = []
         for app in apps {
@@ -40,15 +46,12 @@ final class IPAHomeCollections: ObservableObject {
         }
     }
 
-    var recommended: [StoreApp] {
-        apps.filter { $0.featured == true }
-    }
-
-    var recentlyAdded: [StoreApp] {
-        let cutoff = Date().addingTimeInterval(-3 * 24 * 60 * 60)
+    private static func makeRecentlyAdded(_ apps: [StoreApp]) -> [StoreApp] {
+        let now = Date()
+        let cutoff = now.addingTimeInterval(-3 * 24 * 60 * 60)
         return apps.compactMap { app -> (StoreApp, Date)? in
             guard let raw = app.addedAt, let date = IPAHomeDate.parse(raw),
-                  date >= cutoff, date <= Date() else { return nil }
+                  date >= cutoff, date <= now else { return nil }
             return (app, date)
         }.sorted { $0.1 > $1.1 }.map { $0.0 }
     }
@@ -200,9 +203,8 @@ private struct IPAGlowAppCard: View {
                 .fill(Color(red: 0.075, green: 0.10, blue: 0.18))
             GeometryReader { proxy in
                 Circle()
-                    .fill(glow.opacity(0.63))
+                    .fill(glow.opacity(0.20))
                     .frame(width: proxy.size.width * 0.68, height: 185)
-                    .blur(radius: 32)
                     .offset(x: proxy.size.width * 0.52, y: -34)
                 RoundedRectangle(cornerRadius: 7)
                     .fill(LinearGradient(colors: [.clear, .white.opacity(0.10), .clear],
@@ -210,7 +212,6 @@ private struct IPAGlowAppCard: View {
                     .frame(width: 54, height: 230)
                     .rotationEffect(.degrees(28))
                     .offset(x: proxy.size.width * 0.62, y: -45)
-                    .blur(radius: 8)
             }.clipped()
             HStack(spacing: 12) {
                 VStack(alignment: .leading) {
