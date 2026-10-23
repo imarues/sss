@@ -433,7 +433,7 @@ struct StoreSettingsView: View {
                 .presentationDetents([.height(245)])
                 .presentationDragIndicator(.visible)
         }
-        .task { certificateVault.refresh() }
+        .task { await certificateVault.refresh() }
     }
 
     private var certificateManagerRow: some View {
