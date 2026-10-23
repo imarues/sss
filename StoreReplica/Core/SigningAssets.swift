@@ -39,13 +39,13 @@ enum SigningAssetError: LocalizedError {
 }
 
 enum SigningAssetProvider {
-    struct Credentials {
+    struct Credentials: Sendable {
         let p12: URL
         let mobileProvision: URL
         let password: String
     }
 
-    struct CertificateDetails {
+    struct CertificateDetails: Sendable {
         let name: String
         let profileUUID: String
         let certificateSHA256: String
@@ -53,7 +53,7 @@ enum SigningAssetProvider {
         let provisionedUDIDs: [String]
     }
 
-    struct InspectedCertificate {
+    struct InspectedCertificate: Sendable {
         let p12Data: Data
         let provisionData: Data
         let details: CertificateDetails
