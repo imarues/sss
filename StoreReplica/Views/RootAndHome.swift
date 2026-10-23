@@ -206,6 +206,9 @@ struct HomeView: View {
             ScrollView(showsIndicators: false) {
                 LazyVStack(spacing: StoreTheme.sectionGap, pinnedViews: []) {
                     StoreHeader()
+                    // Live IPA-Ar/deb-Ar collections appear immediately below
+                    // the settings and downloads buttons.
+                    IPAHomeSections()
                     if !(store.home.banners ?? []).isEmpty { BannerCarousel(banners: store.home.banners ?? []) }
                     ForEach(Array(store.home.sections.enumerated()), id: \.offset) { _, section in
                         HomeSectionRenderer(section: section)
