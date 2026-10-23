@@ -164,10 +164,6 @@ struct SearchView: View {
                                             .font(AppFont.medium(11))
                                             .foregroundStyle(StoreTheme.textSecondary)
                                             .lineLimit(1)
-                                        Text(app.notes ?? "الإصدار \(app.version ?? "—")")
-                                            .font(AppFont.regular(10.5))
-                                            .foregroundStyle(StoreTheme.textSecondary)
-                                            .lineLimit(1)
                                     }
                                     .frame(maxWidth: .infinity, alignment: .trailing)
                                 }
@@ -176,7 +172,14 @@ struct SearchView: View {
                             if !app.isDylibAsset {
                                 StoreFavoriteButton(app: app)
                                     .frame(maxWidth: .infinity, alignment: .trailing)
+                                if let notes = app.notes, !notes.isEmpty {
+                                Text(notes)
+                                    .font(AppFont.regular(10.5))
+                                    .foregroundStyle(StoreTheme.textSecondary)
+                                    .lineLimit(1)
+                                    .frame(maxWidth: .infinity, alignment: .trailing)
                             }
+                        }
                         }
 
                         if app.isDylibAsset {
