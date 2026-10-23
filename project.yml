@@ -75,6 +75,10 @@ targets:
       path: StoreReplica/Info.plist
       properties:
         CFBundleDisplayName: "التراث بلس"
+        CFBundleDevelopmentRegion: ar
+        CFBundleLocalizations:
+          - ar
+          - en
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         UIApplicationSupportsIndirectInputEvents: true
