@@ -152,7 +152,7 @@ private struct IPACategoryTile: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            AppIconView(path: category.imageUrl, size: 49)
+            RemoteImage(path: category.imageUrl, cornerRadius: 12).frame(width: 49, height: 49)
             VStack(alignment: .trailing, spacing: 6) {
                 Text(category.name).font(AppFont.bold(14)).foregroundStyle(.white).lineLimit(1)
                 Text("\(category.count ?? 0) تطبيق")
@@ -243,7 +243,7 @@ private struct IPAGlowAppCard: View {
                         }
                     }
                 }.frame(maxWidth: .infinity, alignment: .trailing)
-                AppIconView(path: app.iconUrl, size: 64)
+                AppIconView(app: app, size: 64)
             }
             .padding(16)
         }
