@@ -137,40 +137,19 @@ struct IPAHomeSections: View {
                     .background(StoreTheme.surface, in: Capsule())
                 }
                 Spacer()
-                Text(title).font(AppFont.black(22)).foregroundStyle(StoreTheme.textPrimary)
+                Text(StoreLanguage.localized(title)).font(AppFont.black(22)).foregroundStyle(StoreTheme.textPrimary)
             }.padding(.horizontal, StoreTheme.pageHorizontal)
             LazyVStack(spacing: 12) {
                 ForEach(Array(apps.prefix(5).enumerated()), id: \.element.id) { index, app in
-                    IPAGlowAppRow(app: app, index: index, showsBundle: showsBundle, showsDate: showsDate)
+                    NavigationLink(destination: AppDetailView(app: app)) {
+                        IPAGlowAppCard(app: app, index: index, showsBundle: showsBundle, showsDate: showsDate)
+                    }.buttonStyle(.plain)
                 }
             }.padding(.horizontal, StoreTheme.pageHorizontal)
         }
     }
 }
 
-
-private struct IPAGlowAppRow: View {
-    let app: StoreApp
-    let index: Int
-    let showsBundle: Bool
-    let showsDate: Bool
-
-    var body: some View {
-        ZStack(alignment: .topTrailing) {
-            NavigationLink(destination: AppDetailView(app: app)) {
-                IPAGlowAppCard(app: app, index: index, showsBundle: showsBundle, showsDate: showsDate)
-            }
-            .buttonStyle(.plain)
-            // Sibling of the navigation link: tapping the heart updates favorites,
-            // never accidentally opens the details screen.
-            if !app.isDylibAsset {
-                StoreFavoriteButton(app: app)
-                    .padding(.trailing, 92)
-                    .padding(.top, 68)
-            }
-        }
-    }
-}
 
 private struct IPACategoryTile: View {
     let category: StoreCategory
@@ -180,7 +159,7 @@ private struct IPACategoryTile: View {
             RemoteImage(path: category.imageUrl, cornerRadius: 12).frame(width: 49, height: 49)
             VStack(alignment: .trailing, spacing: 6) {
                 Text(StoreLanguage.localized(category.name)).font(AppFont.bold(14)).foregroundStyle(.white).lineLimit(1)
-                Text("\(category.count ?? 0) تطبيق")
+                Text("\(category.count ?? 0) " + StoreLanguage.localized("تطبيق"))
                     .font(AppFont.medium(11)).foregroundStyle(.white.opacity(0.58))
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
@@ -216,7 +195,7 @@ private struct IPAGlowAppCard: View {
 
     private var sizeText: String {
         guard let bytes = app.fileSize, bytes > 0 else { return StoreLanguage.localized("الحجم غير متوفر") }
-        return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+        return StoreLanguage.isEnglish ? String(format: "%.1f MB", Double(bytes) / 1_000_000) : ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 
     var body: some View {
@@ -225,8 +204,9 @@ private struct IPAGlowAppCard: View {
                 .fill(Color(red: 0.075, green: 0.10, blue: 0.18))
             GeometryReader { proxy in
                 Circle()
-                    .fill(glow.opacity(0.20))
+                    .fill(glow.opacity(0.63))
                     .frame(width: proxy.size.width * 0.68, height: 185)
+                    .blur(radius: 42)
                     .offset(x: proxy.size.width * 0.52, y: -34)
                 RoundedRectangle(cornerRadius: 7)
                     .fill(LinearGradient(colors: [.clear, .white.opacity(0.10), .clear],
@@ -234,10 +214,11 @@ private struct IPAGlowAppCard: View {
                     .frame(width: 54, height: 230)
                     .rotationEffect(.degrees(28))
                     .offset(x: proxy.size.width * 0.62, y: -45)
+                    .blur(radius: 12)
             }.clipped()
             HStack(spacing: 12) {
                 VStack(alignment: .leading) {
-                    Text(app.isDylibAsset ? "عرض" : "تثبيت")
+                    Text(StoreLanguage.localized(app.isDylibAsset ? "عرض" : "تثبيت"))
                         .font(AppFont.bold(13))
                         .foregroundStyle(Color(red: 0.06, green: 0.10, blue: 0.19))
                         .padding(.horizontal, 17)
@@ -250,12 +231,6 @@ private struct IPAGlowAppCard: View {
                     Text(app.name)
                         .font(AppFont.bold(15)).foregroundStyle(.white)
                         .lineLimit(1)
-                    Text(StoreLanguage.localized(app.categories?.first ?? (app.isDylibAsset ? "دايلب" : "تطبيق")))
-                        .font(AppFont.medium(11)).foregroundStyle(.white.opacity(0.64))
-                        .lineLimit(1)
-                    if !app.isDylibAsset {
-                        Color.clear.frame(height: 36)
-                    }
                     Text([app.version.map { "v" + $0 }, sizeText].compactMap { $0 }.joined(separator: " · "))
                         .font(AppFont.medium(11)).foregroundStyle(.white.opacity(0.69))
                         .lineLimit(1)
@@ -276,10 +251,10 @@ private struct IPAGlowAppCard: View {
             }
             .padding(16)
         }
-        .frame(height: 184)
+        .frame(height: 125)
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 24).stroke(.white.opacity(0.10), lineWidth: 0.8))
-        .shadow(color: glow.opacity(0.10), radius: 8, y: 4)
+        .shadow(color: glow.opacity(0.16), radius: 12, y: 5)
     }
 }
 
@@ -292,11 +267,13 @@ private struct IPAHomeCollectionList: View {
         ScrollView {
             LazyVStack(spacing: 12) {
                 ForEach(Array(apps.enumerated()), id: \.element.id) { index, app in
-                    IPAGlowAppRow(app: app, index: index, showsBundle: showsBundle, showsDate: true)
+                    NavigationLink(destination: AppDetailView(app: app)) {
+                        IPAGlowAppCard(app: app, index: index, showsBundle: showsBundle, showsDate: true)
+                    }.buttonStyle(.plain)
                 }
             }.padding(16)
         }
         .background(StoreTheme.background)
-        .navigationTitle(title)
+        .navigationTitle(StoreLanguage.localized(title))
     }
 }
