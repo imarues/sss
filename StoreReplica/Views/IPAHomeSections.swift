@@ -292,9 +292,7 @@ private struct IPAHomeCollectionList: View {
         ScrollView {
             LazyVStack(spacing: 12) {
                 ForEach(Array(apps.enumerated()), id: \.element.id) { index, app in
-                    NavigationLink(destination: AppDetailView(app: app)) {
-                        IPAGlowAppCard(app: app, index: index, showsBundle: showsBundle, showsDate: true)
-                    }.buttonStyle(.plain)
+                    IPAGlowAppRow(app: app, index: index, showsBundle: showsBundle, showsDate: true)
                 }
             }.padding(16)
         }
