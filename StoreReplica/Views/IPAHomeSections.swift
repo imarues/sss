@@ -120,7 +120,7 @@ struct IPAHomeSections: View {
     private func heading(_ title: String) -> some View {
         HStack {
             Spacer()
-            Text(title).font(AppFont.black(22)).foregroundStyle(StoreTheme.textPrimary)
+            Text(StoreLanguage.localized(title)).font(AppFont.black(22)).foregroundStyle(StoreTheme.textPrimary)
         }.padding(.horizontal, StoreTheme.pageHorizontal)
     }
 
@@ -157,7 +157,7 @@ private struct IPACategoryTile: View {
         HStack(spacing: 12) {
             RemoteImage(path: category.imageUrl, cornerRadius: 12).frame(width: 49, height: 49)
             VStack(alignment: .trailing, spacing: 6) {
-                Text(category.name).font(AppFont.bold(14)).foregroundStyle(.white).lineLimit(1)
+                Text(StoreLanguage.localized(category.name)).font(AppFont.bold(14)).foregroundStyle(.white).lineLimit(1)
                 Text("\(category.count ?? 0) تطبيق")
                     .font(AppFont.medium(11)).foregroundStyle(.white.opacity(0.58))
             }
