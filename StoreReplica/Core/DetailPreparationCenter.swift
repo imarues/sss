@@ -37,6 +37,7 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
     private let lock = NSLock()
     private var record: DetailPreparationRecord?
     private var preparingRecordID: String?
+    private var downloadRecoveryAttempts: [String: Int] = [:]
 
     private lazy var session: URLSession = {
         let config = URLSessionConfiguration.background(withIdentifier: Self.backgroundSessionIdentifier)
@@ -79,11 +80,8 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
         _ = session
 
         guard let current = snapshotRecord() else {
-            // Cancel stale tasks left by older builds. A fresh operation will create
-            // a new record before starting a new background task.
-            session.getAllTasks { tasks in
-                tasks.forEach { $0.cancel() }
-            }
+            // Do not asynchronously cancel all tasks here: that callback can
+            // arrive after a new operation has started and kill its download.
             return
         }
 
@@ -100,14 +98,15 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
             guard let self else { return }
             if tasks.contains(where: { $0.taskDescription == current.id }) { return }
 
-            if StoreDownloadStorage.hasValidStagedIPA(for: current.app),
-               let cached = StoreDownloadStorage.stagedURL(for: current.app) {
+            if let cached = self.recoverSourceIPA(for: current) {
                 self.publishProgress(0.54, text: "التطبيق محمّل · جاري التجهيز", record: current)
                 self.prepare(record: current, sourceIPA: cached)
                 return
             }
 
-            self.fail(record: current, error: SideloadSigningError.downloadFailed)
+            // The background task may have been evicted during relaunch.
+            // Retry the network transfer instead of discarding the operation.
+            self.retrySourceDownload(record: current, error: SideloadSigningError.downloadFailed)
         }
     }
 
@@ -168,8 +167,7 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
 
             // Exact normal-install behavior: first reuse the durable staged IPA if
             // already available. Only after a valid source exists do we clone/inject.
-            if StoreDownloadStorage.hasValidStagedIPA(for: app),
-               let cached = StoreDownloadStorage.stagedURL(for: app) {
+            if let cached = recoverSourceIPA(for: next) {
                 _ = StoreDownloadStorage.exportToFiles(stagedURL: cached, job: sourceJob(for: next))
                 publishProgress(0.54, text: "التطبيق محمّل · جاري التجهيز", record: next)
                 prepare(record: next, sourceIPA: cached)
@@ -186,6 +184,38 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
                 dylibPaths: []
             )
             fail(record: fallback, error: error)
+        }
+    }
+
+    private func recoverSourceIPA(for record: DetailPreparationRecord) -> URL? {
+        let job = sourceJob(for: record)
+        if StoreDownloadStorage.hasValidStagedIPA(for: job) {
+            return try? StoreDownloadStorage.stagedURL(for: job)
+        }
+        return StoreDownloadStorage.recoverLegacyExportIfPossible(job: job)
+    }
+
+    private func retrySourceDownload(record: DetailPreparationRecord, error: Error) {
+        guard self.record(id: record.id) != nil else { return }
+        if let cached = recoverSourceIPA(for: record) {
+            prepare(record: record, sourceIPA: cached)
+            return
+        }
+
+        lock.lock()
+        let attempts = downloadRecoveryAttempts[record.id] ?? 0
+        downloadRecoveryAttempts[record.id] = attempts + 1
+        lock.unlock()
+
+        guard attempts < 2 else {
+            fail(record: record, error: error)
+            return
+        }
+        publishProgress(0.02, text: "جاري استعادة تحميل IPA", record: record)
+        do {
+            try startDownload(record: record)
+        } catch {
+            fail(record: record, error: error)
         }
     }
 
@@ -472,6 +502,7 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
         lock.lock()
         record = nil
         preparingRecordID = nil
+        downloadRecoveryAttempts.removeAll()
         try? fm.removeItem(at: recordFile)
         lock.unlock()
 
@@ -547,7 +578,7 @@ extension DetailPreparationCenter: URLSessionDownloadDelegate, URLSessionDelegat
             )
             prepare(record: current, sourceIPA: staged)
         } catch {
-            fail(record: current, error: error)
+            retrySourceDownload(record: current, error: error)
         }
     }
 
@@ -559,13 +590,12 @@ extension DetailPreparationCenter: URLSessionDownloadDelegate, URLSessionDelegat
         // A completion error after didFinishDownloadingTo can race with staging.
         // If the durable IPA exists, continue from it instead of restarting or
         // surfacing a temporary-file error.
-        if StoreDownloadStorage.hasValidStagedIPA(for: current.app),
-           let cached = StoreDownloadStorage.stagedURL(for: current.app) {
+        if let cached = recoverSourceIPA(for: current) {
             prepare(record: current, sourceIPA: cached)
             return
         }
 
-        fail(record: current, error: error)
+        retrySourceDownload(record: current, error: error)
     }
 
     func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
