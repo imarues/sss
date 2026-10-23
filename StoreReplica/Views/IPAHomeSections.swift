@@ -159,7 +159,7 @@ private struct IPACategoryTile: View {
             RemoteImage(path: category.imageUrl, cornerRadius: 12).frame(width: 49, height: 49)
             VStack(alignment: .trailing, spacing: 6) {
                 Text(StoreLanguage.localized(category.name)).font(AppFont.bold(14)).foregroundStyle(.white).lineLimit(1)
-                Text("\(category.count ?? 0) " + StoreLanguage.localized("تطبيق"))
+                Text(StoreLanguage.isEnglish ? "\(category.count ?? 0) apps" : "\(category.count ?? 0) تطبيق")
                     .font(AppFont.medium(11)).foregroundStyle(.white.opacity(0.58))
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
