@@ -104,8 +104,12 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
         InstallLiveActivityBridge.begin(job: liveJob(for: current))
 
         session.getAllTasks { [weak self] tasks in
-            guard let self else { return }
+            guard let self, self.record(id: current.id) != nil else { return }
             if tasks.contains(where: { $0.taskDescription == current.id }) { return }
+            self.lock.lock()
+            let rescuing = self.rescueTasks[current.id] != nil
+            self.lock.unlock()
+            if rescuing { return }
 
             if let cached = self.recoverSourceIPA(for: current) {
                 self.publishProgress(0.54, text: "التطبيق محمّل · جاري التجهيز", record: current)
@@ -177,7 +181,7 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
             // Exact normal-install behavior: first reuse the durable staged IPA if
             // already available. Only after a valid source exists do we clone/inject.
             if let cached = recoverSourceIPA(for: next) {
-                _ = StoreDownloadStorage.exportToFiles(stagedURL: cached, job: sourceJob(for: next))
+                preserveOriginalForDownloads(cached, record: next)
                 publishProgress(0.54, text: "التطبيق محمّل · جاري التجهيز", record: next)
                 prepare(record: next, sourceIPA: cached)
                 return
@@ -196,12 +200,71 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
         }
     }
 
-    private func recoverSourceIPA(for record: DetailPreparationRecord) -> URL? {
-        let job = sourceJob(for: record)
-        if StoreDownloadStorage.hasValidStagedIPA(for: job) {
-            return try? StoreDownloadStorage.stagedURL(for: job)
+    // Each clone/injection job owns an immutable copy of its original IPA.
+    // Store installs and other jobs may replace the shared download cache,
+    // but they must never mutate the file currently being unpacked here.
+    private func sourceSnapshotURL(for record: DetailPreparationRecord) -> URL {
+        operationRoot
+            .appendingPathComponent(record.id, isDirectory: true)
+            .appendingPathComponent("Original.ipa")
+    }
+
+    private func captureSourceIPA(from source: URL, record: DetailPreparationRecord) throws -> URL {
+        let destination = sourceSnapshotURL(for: record)
+        if StoreDownloadStorage.isValidIPA(at: destination) {
+            return destination
         }
-        return StoreDownloadStorage.recoverLegacyExportIfPossible(job: job)
+        guard fm.fileExists(atPath: source.path) else {
+            throw StoreDownloadStorageError.sourceMissing
+        }
+        let directory = destination.deletingLastPathComponent()
+        try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        let incoming = directory.appendingPathComponent("Original.incoming-" + UUID().uuidString + ".ipa")
+        defer { try? fm.removeItem(at: incoming) }
+        // Do not move/link URLSession's temp file: copy its bytes synchronously
+        // while the download completion callback still owns the file.
+        try fm.copyItem(at: source, to: incoming)
+        try StoreDownloadStorage.validateIPA(at: incoming)
+
+        // Reject obvious interrupted/truncated responses before the original
+        // is handed to either clone or dylib preparation.
+        let actual = (try fm.attributesOfItem(atPath: incoming.path)[.size] as? NSNumber)?.int64Value ?? 0
+        let expected = record.app.fileSize ?? 0
+        if expected >= 5 * 1024 * 1024 && actual < expected / 2 {
+            throw StoreDownloadStorageError.truncatedFile
+        }
+
+        if fm.fileExists(atPath: destination.path) {
+            // The old snapshot was invalid; replacement bytes are now complete.
+            try fm.removeItem(at: destination)
+        }
+        try fm.moveItem(at: incoming, to: destination)
+        try StoreDownloadStorage.validateIPA(at: destination)
+        return destination
+    }
+
+    private func preserveOriginalForDownloads(_ snapshot: URL, record: DetailPreparationRecord) {
+        let job = sourceJob(for: record)
+        // Shared store cache and user-visible Downloads are separate copies.
+        // Failure exporting them must not destroy the immutable working IPA.
+        if let staged = try? StoreDownloadStorage.stageFinishedDownload(from: snapshot, job: job) {
+            _ = StoreDownloadStorage.exportToFiles(stagedURL: staged, job: job)
+        }
+    }
+
+    private func recoverSourceIPA(for record: DetailPreparationRecord) -> URL? {
+        let snapshot = sourceSnapshotURL(for: record)
+        if StoreDownloadStorage.isValidIPA(at: snapshot) { return snapshot }
+
+        let job = sourceJob(for: record)
+        let shared: URL?
+        if StoreDownloadStorage.hasValidStagedIPA(for: job) {
+            shared = try? StoreDownloadStorage.stagedURL(for: job)
+        } else {
+            shared = StoreDownloadStorage.recoverLegacyExportIfPossible(job: job)
+        }
+        guard let source = shared else { return nil }
+        return try? captureSourceIPA(from: source, record: record)
     }
 
     private func retrySourceDownload(record: DetailPreparationRecord, error: Error) {
@@ -212,6 +275,13 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
         }
 
         lock.lock()
+        // One failed download can emit BOTH didFinishDownloadingTo and
+        // didCompleteWithError. An old callback must not cancel an active
+        // data-stream rescue or clear its persisted operation record.
+        if rescueTasks[record.id] != nil {
+            lock.unlock()
+            return
+        }
         let attempts = downloadRecoveryAttempts[record.id] ?? 0
         downloadRecoveryAttempts[record.id] = attempts + 1
         lock.unlock()
@@ -386,10 +456,12 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
     }
 
     private func fail(record: DetailPreparationRecord, error: Error) {
+        guard self.record(id: record.id) != nil else { return }
         let text = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         InstallLiveActivityBridge.finish(job: liveJob(for: record), success: false, detail: text)
 
         DispatchQueue.main.async {
+            guard self.record(id: record.id) != nil else { return }
             self.busy = false
             self.progress = 0
             self.statusText = ""
@@ -555,7 +627,7 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
     }
 }
 
-extension DetailPreparationCenter: URLSessionDownloadDelegate, URLSessionDelegate {
+extension DetailPreparationCenter: URLSessionDownloadDelegate, URLSessionDataDelegate {
     func urlSession(
         _ session: URLSession,
         downloadTask: URLSessionDownloadTask,
@@ -598,12 +670,8 @@ extension DetailPreparationCenter: URLSessionDownloadDelegate, URLSessionDelegat
             // This is deliberately the exact same staging primitive used by a
             // normal install. Once this returns, the source IPA is durable and no
             // later clone/injection step depends on the URLSession temp file.
-            let staged = try StoreDownloadStorage.stageFinishedDownload(
-                from: location,
-                job: sourceJob(for: current)
-            )
-
-            _ = StoreDownloadStorage.exportToFiles(stagedURL: staged, job: sourceJob(for: current))
+            let staged = try captureSourceIPA(from: location, record: current)
+            preserveOriginalForDownloads(staged, record: current)
             publishProgress(
                 0.54,
                 text: "اكتمل التحميل · تم حفظ IPA",
@@ -702,12 +770,9 @@ extension DetailPreparationCenter: URLSessionDownloadDelegate, URLSessionDelegat
             return
         }
         do {
-            let staged = try StoreDownloadStorage.stageFinishedDownload(
-                from: entry.0,
-                job: sourceJob(for: current)
-            )
+            let staged = try captureSourceIPA(from: entry.0, record: current)
             try? fm.removeItem(at: entry.0)
-            _ = StoreDownloadStorage.exportToFiles(stagedURL: staged, job: sourceJob(for: current))
+            preserveOriginalForDownloads(staged, record: current)
             prepare(record: current, sourceIPA: staged)
         } catch {
             try? fm.removeItem(at: entry.0)
