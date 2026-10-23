@@ -645,7 +645,7 @@ struct SigningHubView: View {
                     Button {
                         withAnimation(.easeInOut(duration: 0.12)) { model.copyVariant = variant }
                     } label: {
-                        Text(variant.title)
+                        Text(StoreLanguage.localized(variant.title))
                             .font(AppFont.bold(11.5))
                             .foregroundStyle(model.copyVariant == variant ? StoreTheme.onAccent : StoreTheme.textSecondary)
                             .frame(width: variant == .original ? 76 : 42, height: 36)
@@ -762,7 +762,7 @@ struct SigningHubView: View {
                     Image(systemName: icon)
                         .font(.system(size: 16, weight: .bold))
                 }
-                Text(title)
+                Text(StoreLanguage.localized(title))
                     .font(AppFont.black(14))
                     .lineLimit(1)
             }
@@ -806,7 +806,7 @@ struct SigningHubView: View {
         VStack(spacing: 10) {
             HStack(spacing: 10) {
                 ProgressView().tint(StoreTheme.accent)
-                Text(title)
+                Text(StoreLanguage.localized(title))
                     .font(AppFont.bold(12))
                     .foregroundStyle(StoreTheme.textPrimary)
                 Spacer()
@@ -841,7 +841,7 @@ struct SigningHubView: View {
                     Text("تنزيلاتي")
                         .font(AppFont.black(19))
                         .foregroundStyle(StoreTheme.textPrimary)
-                    Text(activeTransferCount > 0 ? "تابع العمليات الجارية والملفات المحمّلة" : "التطبيقات وملفات الديلب المحمّلة")
+                    Text(StoreLanguage.localized(activeTransferCount > 0 ? "تابع العمليات الجارية والملفات المحمّلة" : "التطبيقات وملفات الديلب المحمّلة"))
                         .font(AppFont.regular(10.5))
                         .foregroundStyle(StoreTheme.textSecondary)
                 }
@@ -949,7 +949,7 @@ struct SigningHubView: View {
                 Text("v\(item.version) • \(formatBytes(item.size))")
                     .font(AppFont.regular(10.5))
                     .foregroundStyle(StoreTheme.textSecondary)
-                Text(item.source == .link ? "عبر رابط" : "من التحديثات")
+                Text(StoreLanguage.localized(item.source == .link ? "عبر رابط" : "من التحديثات"))
                     .font(AppFont.medium(9.5))
                     .foregroundStyle(item.source == .link ? StoreTheme.accent : StoreTheme.badgeUpdated)
             }
