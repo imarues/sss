@@ -368,6 +368,7 @@ struct StoreSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var certificateVault = SigningCertificateVault.shared
     @AppStorage("store.favoriteIDs") private var favoriteIDs = ""
+    @AppStorage("store.favoriteAppsJSON") private var favoriteAppsJSON = ""
     @AppStorage("store.language") private var selectedLanguage = "ar"
     @State private var favoriteApps: [StoreApp] = []
     @State private var selectedFavorite: StoreApp?
@@ -439,7 +440,7 @@ struct StoreSettingsView: View {
                 VStack(alignment: .trailing, spacing: 5) {
                     Text("إدارة الشهادات").font(AppFont.bold(16))
                         .foregroundStyle(StoreTheme.textPrimary)
-                    Text("\(certificateVault.certificates.count) شهادة محفوظة")
+                    Text("\(certificateVault.certificates.count) " + StoreLanguage.localized("شهادات محفوظة"))
                         .font(AppFont.medium(11))
                         .foregroundStyle(StoreTheme.textSecondary)
                 }
@@ -455,7 +456,9 @@ struct StoreSettingsView: View {
 
     private var favoritesSection: some View {
         let ids = favoriteIDs.split(separator: "\n").map(String.init)
-        let catalog = Dictionary(favoriteApps.map { ($0.id, $0) },
+        let locallySaved = favoriteAppsJSON.data(using: .utf8)
+            .flatMap { try? JSONDecoder().decode([StoreApp].self, from: $0) } ?? []
+        let catalog = Dictionary((favoriteApps + locallySaved).map { ($0.id, $0) },
                                  uniquingKeysWith: { first, _ in first })
         let favorites = ids.compactMap { catalog[$0] }.filter { !$0.isDylibAsset }
         return VStack(alignment: .trailing, spacing: 12) {
