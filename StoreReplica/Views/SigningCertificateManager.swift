@@ -1,6 +1,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+@MainActor
 struct SigningCertificateManagerView: View {
     @ObservedObject private var vault = SigningCertificateVault.shared
     @Environment(\.dismiss) private var dismiss
