@@ -87,7 +87,7 @@ struct SigningCertificateManagerView: View {
             }
         }
         .preferredColorScheme(.dark)
-        .task { vault.refresh() }
+        .task { await vault.refresh() }
         .sheet(isPresented: $showP12Picker) {
             SigningFilePicker(allowedContentTypes: [.signingP12]) { urls in
                 showP12Picker = false
