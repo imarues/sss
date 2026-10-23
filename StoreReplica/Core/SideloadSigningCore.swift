@@ -671,6 +671,7 @@ final class SideloadURLDownloader: NSObject, URLSessionDownloadDelegate, URLSess
     private var suggestedName: String?
     private var adoptedURL: URL?
     private var responseError: Error?
+    private var activeDownloadTask: URLSessionDownloadTask?
     private lazy var session: URLSession = {
         let config = URLSessionConfiguration.default
         config.allowsCellularAccess = true
@@ -696,11 +697,16 @@ final class SideloadURLDownloader: NSObject, URLSessionDownloadDelegate, URLSess
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 60
         request.setValue("application/octet-stream,*/*;q=0.9", forHTTPHeaderField: "Accept")
-        session.downloadTask(with: request).resume()
+        let task = session.downloadTask(with: request)
+        activeDownloadTask = task
+        task.resume()
     }
 
     func cancel() {
-        session.getAllTasks { $0.forEach { $0.cancel() } }
+        // getAllTasks is asynchronous and could cancel a freshly started task.
+        // Cancel the known previous task synchronously instead.
+        activeDownloadTask?.cancel()
+        activeDownloadTask = nil
     }
 
     func urlSession(
@@ -734,6 +740,9 @@ final class SideloadURLDownloader: NSObject, URLSessionDownloadDelegate, URLSess
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        // Ignore completion of an older cancelled task after a new download starts.
+        guard task.taskIdentifier == activeDownloadTask?.taskIdentifier else { return }
+        activeDownloadTask = nil
         let callback = completion
         completion = nil
         if let error {
