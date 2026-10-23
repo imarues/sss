@@ -136,7 +136,7 @@ struct IPAHomeSections: View {
                 Spacer()
                 Text(title).font(AppFont.black(22)).foregroundStyle(StoreTheme.textPrimary)
             }.padding(.horizontal, StoreTheme.pageHorizontal)
-            VStack(spacing: 12) {
+            LazyVStack(spacing: 12) {
                 ForEach(Array(apps.prefix(5).enumerated()), id: \.element.id) { index, app in
                     NavigationLink(destination: AppDetailView(app: app)) {
                         IPAGlowAppCard(app: app, index: index, showsBundle: showsBundle, showsDate: showsDate)
@@ -202,7 +202,7 @@ private struct IPAGlowAppCard: View {
                 Circle()
                     .fill(glow.opacity(0.63))
                     .frame(width: proxy.size.width * 0.68, height: 185)
-                    .blur(radius: 67)
+                    .blur(radius: 32)
                     .offset(x: proxy.size.width * 0.52, y: -34)
                 RoundedRectangle(cornerRadius: 7)
                     .fill(LinearGradient(colors: [.clear, .white.opacity(0.10), .clear],
@@ -210,7 +210,7 @@ private struct IPAGlowAppCard: View {
                     .frame(width: 54, height: 230)
                     .rotationEffect(.degrees(28))
                     .offset(x: proxy.size.width * 0.62, y: -45)
-                    .blur(radius: 16)
+                    .blur(radius: 8)
             }.clipped()
             HStack(spacing: 12) {
                 VStack(alignment: .leading) {
@@ -250,7 +250,7 @@ private struct IPAGlowAppCard: View {
         .frame(height: 125)
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 24).stroke(.white.opacity(0.10), lineWidth: 0.8))
-        .shadow(color: glow.opacity(0.12), radius: 16, y: 5)
+        .shadow(color: glow.opacity(0.10), radius: 8, y: 4)
     }
 }
 
