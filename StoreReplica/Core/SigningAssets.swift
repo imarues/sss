@@ -1,11 +1,13 @@
 import Foundation
 import Security
+import ZsignSwift
 
 enum SigningAssetError: LocalizedError {
     case wrongP12Extension
     case wrongProvisionExtension
     case emptyFile(String)
     case invalidP12
+    case unsupportedP12Format(Int)
     case badP12Password
     case invalidProvision
     case expiredProvision
@@ -20,7 +22,9 @@ enum SigningAssetError: LocalizedError {
         case .emptyFile(let name):
             return "الملف \(name) فارغ أو غير قابل للقراءة."
         case .invalidP12:
-            return "ملف P12 غير صالح أو لا يحتوي هوية توقيع."
+            return "ملف P12 لا يحتوي شهادة ومفتاحاً خاصاً متطابقين."
+        case .unsupportedP12Format(let status):
+            return "تعذر قراءة صيغة P12 (Security.framework: \\(status)). تأكد من كلمة المرور والملف الأصلي."
         case .badP12Password:
             return "كلمة مرور P12 غير صحيحة."
         case .invalidProvision:
@@ -58,8 +62,11 @@ enum SigningAssetProvider {
     }
 
     static func details(p12Data: Data, provisionData: Data, password: String) throws -> CertificateDetails {
-        let certData = try identityCertificateData(p12Data: p12Data, password: password)
         let profile = try provisionDictionary(data: provisionData)
+        let certData = try identityCertificateData(
+            p12Data: p12Data, password: password,
+            expectedCertificates: profile["DeveloperCertificates"] as? [Data]
+        )
         try validate(identityCertificate: certData, provision: profile)
         guard let expires = profile["ExpirationDate"] as? Date,
               let identifier = profile["UUID"] as? String else {
@@ -185,8 +192,11 @@ enum SigningAssetProvider {
         guard !p12Data.isEmpty else { throw SigningAssetError.emptyFile(p12URL.lastPathComponent) }
         guard !provisionData.isEmpty else { throw SigningAssetError.emptyFile(profileURL.lastPathComponent) }
 
-        let identityCertificate = try identityCertificateData(p12Data: p12Data, password: password)
         let provision = try provisionDictionary(data: provisionData)
+        let identityCertificate = try identityCertificateData(
+            p12Data: p12Data, password: password,
+            expectedCertificates: provision["DeveloperCertificates"] as? [Data]
+        )
         try validate(identityCertificate: identityCertificate, provision: provision)
 
         guard let p12Target = storedP12, let provisionTarget = storedProvision else {
@@ -279,33 +289,49 @@ enum SigningAssetProvider {
         }
     }
 
-    private static func identityCertificateData(p12Data: Data, password: String) throws -> Data {
+    private static func identityCertificateData(
+        p12Data: Data, password: String, expectedCertificates: [Data]? = nil
+    ) throws -> Data {
         guard !p12Data.isEmpty else { throw SigningAssetError.invalidP12 }
 
         var imported: CFArray?
         let options = [kSecImportExportPassphrase as String: password] as CFDictionary
         let status = SecPKCS12Import(p12Data as CFData, options, &imported)
+
+        var candidates: [Data] = []
+        if status == errSecSuccess, let entries = imported as? [[String: Any]] {
+            // Not every P12 returns its signing identity as its first item.
+            for entry in entries {
+                guard let identityValue = entry[kSecImportItemIdentity as String] else { continue }
+                let identity = identityValue as! SecIdentity
+                var certificate: SecCertificate?
+                if SecIdentityCopyCertificate(identity, &certificate) == errSecSuccess,
+                   let certificate {
+                    candidates.append(SecCertificateCopyData(certificate) as Data)
+                }
+            }
+        }
+
+        // OpenSSL 3 (already used by the signing engine) can decode modern
+        // AES/PBES2 PKCS12 files that Security.framework sometimes rejects.
+        if let fallback = Zsign.certificateDER(p12Data: p12Data, password: password),
+           !candidates.contains(fallback) {
+            candidates.append(fallback)
+        }
+
+        if let expectedCertificates, !expectedCertificates.isEmpty,
+           let matched = candidates.first(where: { expectedCertificates.contains($0) }) {
+            return matched
+        }
+        if let first = candidates.first { return first }
+
         if status == errSecAuthFailed || status == errSecPkcs12VerifyFailure {
             throw SigningAssetError.badP12Password
         }
-        guard status == errSecSuccess,
-              let items = imported as? [[String: Any]],
-              let first = items.first,
-              let identityValue = first[kSecImportItemIdentity as String] else {
-            throw SigningAssetError.invalidP12
+        if status != errSecSuccess {
+            throw SigningAssetError.unsupportedP12Format(Int(status))
         }
-
-        let identity = identityValue as! SecIdentity
-        guard CFGetTypeID(identity) == SecIdentityGetTypeID() else {
-            throw SigningAssetError.invalidP12
-        }
-
-        var certificate: SecCertificate?
-        guard SecIdentityCopyCertificate(identity, &certificate) == errSecSuccess,
-              let certificate else {
-            throw SigningAssetError.invalidP12
-        }
-        return SecCertificateCopyData(certificate) as Data
+        throw SigningAssetError.invalidP12
     }
 
     private static func provisionDictionary(data: Data) throws -> [String: Any] {
