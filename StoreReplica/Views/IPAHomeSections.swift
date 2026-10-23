@@ -244,6 +244,7 @@ private struct IPAGlowAppCard: View {
                         }
                     }
                 }.frame(maxWidth: .infinity, alignment: .trailing)
+                if !app.isDylibAsset { StoreFavoriteButton(app: app) }
                 AppIconView(app: app, size: 64)
             }
             .padding(16)
