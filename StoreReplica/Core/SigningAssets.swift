@@ -1,6 +1,7 @@
 import Foundation
 import Security
 import ZsignSwift
+import CryptoKit
 
 enum SigningAssetError: LocalizedError {
     case wrongP12Extension
@@ -47,6 +48,7 @@ enum SigningAssetProvider {
     struct CertificateDetails {
         let name: String
         let profileUUID: String
+        let certificateSHA256: String
         let expiration: Date
         let provisionedUDIDs: [String]
     }
@@ -103,6 +105,7 @@ enum SigningAssetProvider {
         return CertificateDetails(
             name: name,
             profileUUID: identifier,
+            certificateSHA256: SHA256.hash(data: certData).map { String(format: "%02x", $0) }.joined(),
             expiration: expires,
             provisionedUDIDs: profile["ProvisionedDevices"] as? [String] ?? []
         )
