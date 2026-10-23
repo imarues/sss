@@ -139,11 +139,8 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
     private func start(app: StoreApp, kind: DetailPreparationKind, copyNumber: Int?, dylibs: [URL]) {
         guard !busy else { return }
 
-        guard SigningAssetProvider.hasCredentials else {
-            publishError("اختر شهادة التوقيع أولًا ثم أعد العملية.")
-            return
-        }
-
+        // Source download and preparation must not depend on certificate setup.
+        // Signing is requested only after the resulting IPA is safely staged.
         do {
             let id = UUID().uuidString
             let storedDylibs = try persistDylibs(dylibs, operationID: id)
@@ -173,6 +170,7 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
             // already available. Only after a valid source exists do we clone/inject.
             if StoreDownloadStorage.hasValidStagedIPA(for: app),
                let cached = StoreDownloadStorage.stagedURL(for: app) {
+                _ = StoreDownloadStorage.exportToFiles(stagedURL: cached, job: sourceJob(for: next))
                 publishProgress(0.54, text: "التطبيق محمّل · جاري التجهيز", record: next)
                 prepare(record: next, sourceIPA: cached)
                 return
@@ -541,6 +539,7 @@ extension DetailPreparationCenter: URLSessionDownloadDelegate, URLSessionDelegat
                 job: sourceJob(for: current)
             )
 
+            _ = StoreDownloadStorage.exportToFiles(stagedURL: staged, job: sourceJob(for: current))
             publishProgress(
                 0.54,
                 text: "اكتمل التحميل · تم حفظ IPA",
