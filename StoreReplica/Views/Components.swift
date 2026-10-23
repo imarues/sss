@@ -431,6 +431,8 @@ struct CategoryGridTile: View {
 struct StoreFavoriteButton: View {
     let app: StoreApp
     @AppStorage("store.favoriteIDs") private var favoriteIDs = ""
+    @AppStorage("store.favoriteAppsJSON") private var favoriteAppsJSON = ""
+    @State private var showLimit = false
 
     private var ids: [String] { favoriteIDs.split(separator: "\n").map(String.init) }
     private var isFavorite: Bool { ids.contains(app.id) }
@@ -438,20 +440,38 @@ struct StoreFavoriteButton: View {
     var body: some View {
         Button {
             var current = ids
+            var saved: [StoreApp] = favoriteAppsJSON.data(using: .utf8)
+                .flatMap { try? JSONDecoder().decode([StoreApp].self, from: $0) } ?? []
             if isFavorite {
                 current.removeAll { $0 == app.id }
-            } else if current.count < 25 {
+                saved.removeAll { $0.id == app.id }
+            } else {
+                guard current.count < 25 else {
+                    showLimit = true
+                    return
+                }
                 current.append(app.id)
+                saved.removeAll { $0.id == app.id }
+                saved.append(app)
+            }
+            if let data = try? JSONEncoder().encode(saved),
+               let json = String(data: data, encoding: .utf8) {
+                favoriteAppsJSON = json
             }
             favoriteIDs = current.joined(separator: "\n")
         } label: {
             Image(systemName: isFavorite ? "heart.fill" : "heart")
                 .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(isFavorite ? Color.red : StoreTheme.textSecondary)
+                .foregroundStyle(Color.red.opacity(isFavorite ? 1 : 0.76))
                 .frame(width: 36, height: 36)
                 .background(StoreTheme.surface, in: Circle())
         }
         .buttonStyle(.borderless)
-        .accessibilityLabel(isFavorite ? "إزالة من المفضلة" : "إضافة إلى المفضلة")
+        .accessibilityLabel(StoreLanguage.localized(isFavorite ? "إزالة من المفضلة" : "إضافة إلى المفضلة"))
+        .alert("المفضلة", isPresented: $showLimit) {
+            Button("حسنًا", role: .cancel) { }
+        } message: {
+            Text("الحد الأقصى 25 تطبيقاً أو لعبة.")
+        }
     }
 }
