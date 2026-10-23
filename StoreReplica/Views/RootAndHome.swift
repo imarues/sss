@@ -51,7 +51,7 @@ struct SplashView: View {
                         .font(AppFont.medium(13)).foregroundStyle(Color.white.opacity(0.74)).multilineTextAlignment(.center).padding(.horizontal, 40)
                 }
                 if let count = spec?.appCount {
-                    Text("+\(count.formatted()) " + StoreLanguage.localized("تطبيق"))
+                    Text(StoreLanguage.isEnglish ? "+\(count.formatted()) apps" : "+\(count.formatted()) تطبيق")
                         .font(AppFont.bold(12)).foregroundStyle(.white)
                         .padding(.horizontal, 15).frame(height: 31).background(Color.white.opacity(0.1)).clipShape(Capsule())
                 }
