@@ -57,7 +57,7 @@ private struct KiraSearchEntry: Decodable {
     private enum CodingKeys: String, CodingKey {
         case id, name, bundleIdentifier, bundleId, iconURL, localizedDescription
         case category, fileType, version, size, downloadURL, downloadUrl, ipaUrl, url, versions
-        case recommend, addedAt, updatedAt, versionUpdatedAt, date, added, lastUpdated
+        case recommend, recommended, addedAt, updatedAt, versionUpdatedAt, date, added, lastUpdated
     }
 
     init(from decoder: Decoder) throws {
@@ -76,10 +76,10 @@ private struct KiraSearchEntry: Decodable {
         ipaUrl = try? c.decodeIfPresent(String.self, forKey: .ipaUrl)
         url = try? c.decodeIfPresent(String.self, forKey: .url)
         versions = try? c.decodeIfPresent([KiraSearchVersion].self, forKey: .versions)
-        let recommendedBool = try? c.decode(Bool.self, forKey: .recommend)
-        let recommendedInt = try? c.decode(Int.self, forKey: .recommend)
-        let recommendedText = try? c.decode(String.self, forKey: .recommend)
-        recommend = recommendedBool ?? (recommendedInt == 1 || ["true", "yes", "1"].contains(recommendedText?.lowercased() ?? ""))
+        let recommendedBool = (try? c.decode(Bool.self, forKey: .recommended)) ?? (try? c.decode(Bool.self, forKey: .recommend))
+        let recommendedInt = (try? c.decode(Int.self, forKey: .recommended)) ?? (try? c.decode(Int.self, forKey: .recommend))
+        let recommendedText = (try? c.decode(String.self, forKey: .recommended)) ?? (try? c.decode(String.self, forKey: .recommend))
+        recommend = recommendedBool ?? (recommendedInt == 1 || ["true", "yes", "1"].contains(recommendedText?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""))
         addedAt = (try? c.decodeIfPresent(String.self, forKey: .addedAt))
             ?? (try? c.decodeIfPresent(String.self, forKey: .added))
             ?? (try? c.decodeIfPresent(String.self, forKey: .date))
