@@ -63,11 +63,19 @@ final class SigningCertificateVault: ObservableObject {
     }
 
     /// Picks up a certificate imported earlier through the existing signing flow.
-    func refresh() {
+    func refresh() async {
         loadIndex()
-        guard SigningAssetProvider.hasP12File && SigningAssetProvider.hasProvisionFile,
-              let credentials = try? SigningAssetProvider.credentials(),
-              let details = try? SigningAssetProvider.details(credentials: credentials) else { return }
+        // PKCS12 decoding and crypto verification are too expensive for the
+        // UI main actor; opening account/settings must remain responsive.
+        let scanned = await Task.detached(priority: .utility) {
+            () -> (SigningAssetProvider.Credentials, SigningAssetProvider.CertificateDetails)? in
+            guard SigningAssetProvider.hasP12File && SigningAssetProvider.hasProvisionFile,
+                  let credentials = try? SigningAssetProvider.credentials(),
+                  let details = try? SigningAssetProvider.details(credentials: credentials)
+            else { return nil }
+            return (credentials, details)
+        }.value
+        guard let (credentials, details) = scanned else { return }
         if let existing = certificates.first(where: {
             $0.profileUUID == details.profileUUID &&
             ($0.certificateSHA256 == details.certificateSHA256 ||
