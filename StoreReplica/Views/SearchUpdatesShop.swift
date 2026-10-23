@@ -151,23 +151,33 @@ struct SearchView: View {
             } else {
                 ForEach(Array(results.enumerated()), id: \.element.id) { index, app in
                     HStack(spacing: 10) {
-                        NavigationLink(destination: AppDetailView(app: app)) {
-                            HStack(spacing: 12) {
-                                AppIconView(app: app, size: 62)
-                                VStack(alignment: .trailing, spacing: 5) {
-                                    Text(app.name)
-                                        .font(AppFont.bold(15))
-                                        .foregroundStyle(StoreTheme.textPrimary)
-                                        .lineLimit(1)
-                                    Text(app.notes ?? "الإصدار \(app.version ?? "—")")
-                                        .font(AppFont.regular(11.5))
-                                        .foregroundStyle(StoreTheme.textSecondary)
-                                        .lineLimit(2)
+                        VStack(alignment: .trailing, spacing: 3) {
+                            NavigationLink(destination: AppDetailView(app: app)) {
+                                HStack(spacing: 12) {
+                                    AppIconView(app: app, size: 62)
+                                    VStack(alignment: .trailing, spacing: 5) {
+                                        Text(app.name)
+                                            .font(AppFont.bold(15))
+                                            .foregroundStyle(StoreTheme.textPrimary)
+                                            .lineLimit(1)
+                                        Text(StoreLanguage.localized(app.categories?.first ?? (app.isDylibAsset ? "دايلب" : "تطبيق")))
+                                            .font(AppFont.medium(11))
+                                            .foregroundStyle(StoreTheme.textSecondary)
+                                            .lineLimit(1)
+                                        Text(app.notes ?? "الإصدار \(app.version ?? "—")")
+                                            .font(AppFont.regular(10.5))
+                                            .foregroundStyle(StoreTheme.textSecondary)
+                                            .lineLimit(1)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .trailing)
                                 }
-                                .frame(maxWidth: .infinity, alignment: .trailing)
+                            }
+                            .buttonStyle(.plain)
+                            if !app.isDylibAsset {
+                                StoreFavoriteButton(app: app)
+                                    .frame(maxWidth: .infinity, alignment: .trailing)
                             }
                         }
-                        .buttonStyle(.plain)
 
                         if app.isDylibAsset {
                             DirectDownloadButton(app: app, compact: true)
