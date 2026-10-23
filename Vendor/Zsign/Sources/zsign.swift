@@ -5,9 +5,15 @@
 //  Created by samara on 17.04.2025.
 //
 
+import Foundation
 import Zsign
 
 public enum Zsign {
+	/// Extract a signing certificate from PKCS#12 using OpenSSL 3.
+	/// Returns nil if the archive lacks a matching private key or can't be decrypted.
+	public static func certificateDER(p12Data: Data, password: String) -> Data? {
+		return ZsignExtractP12Certificate(p12Data as NSData, password) as Data?
+	}
 	/// Checks if the MachO-file is properly signed
 	/// - Parameter appExecutable: Executable
 	/// - Returns: True if its signed
