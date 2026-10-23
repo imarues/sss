@@ -512,11 +512,11 @@ struct StoreSettingsView: View {
         return VStack(spacing: 15) {
             HStack {
                 VStack(alignment: .trailing, spacing: 5) {
-                    Text(current == nil ? "لا توجد شهادة" : "شهادة سنوية")
+                    Text(StoreLanguage.localized(current == nil ? "لا توجد شهادة" : "شهادة سنوية"))
                         .font(AppFont.black(21))
                         .foregroundStyle(.white)
-                    Text(current == nil ? "أضف شهادة للبدء" :
-                         (current!.isValid ? "اشتراك فعال" : "الشهادة منتهية"))
+                    Text(StoreLanguage.localized(current == nil ? "أضف شهادة للبدء" :
+                         (current!.isValid ? "اشتراك فعال" : "الشهادة منتهية")))
                         .font(AppFont.medium(11))
                         .foregroundStyle(.white.opacity(0.75))
                 }
