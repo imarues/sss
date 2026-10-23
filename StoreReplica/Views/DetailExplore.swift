@@ -400,7 +400,7 @@ struct AppDetailView: View {
                         Text(String(format: "%.1f", reviews.average ?? 0))
                             .font(AppFont.black(29))
                             .foregroundStyle(StoreTheme.textPrimary)
-                        Text("من \(reviews.count ?? 0) تقييم")
+                        Text(StoreLanguage.isEnglish ? "From \(reviews.count ?? 0) reviews" : "من \(reviews.count ?? 0) تقييم")
                             .font(AppFont.regular(10.5))
                             .foregroundStyle(StoreTheme.textSecondary)
                     }
@@ -433,7 +433,7 @@ struct AppDetailView: View {
                         Text(String(format: "%.1f", rating))
                             .font(AppFont.black(29))
                             .foregroundStyle(StoreTheme.textPrimary)
-                        Text("App Store · \(appleItem?.ratingCount ?? 0) تقييم")
+                        Text(StoreLanguage.isEnglish ? "App Store · \(appleItem?.ratingCount ?? 0) ratings" : "App Store · \(appleItem?.ratingCount ?? 0) تقييم")
                             .font(AppFont.regular(10.5))
                             .foregroundStyle(StoreTheme.textSecondary)
                     }
@@ -673,7 +673,7 @@ struct ExploreView: View {
                             Text("استكشف")
                                 .font(AppFont.black(29))
                                 .foregroundStyle(StoreTheme.textPrimary)
-                            Text("اكتشف أكثر من \((store.explore.totalApps ?? store.catalog.total ?? 0).formatted()) تطبيق ولعبة")
+                            Text(StoreLanguage.isEnglish ? "Explore over \((store.explore.totalApps ?? store.catalog.total ?? 0).formatted()) apps and games" : "اكتشف أكثر من \((store.explore.totalApps ?? store.catalog.total ?? 0).formatted()) تطبيق ولعبة")
                                 .font(AppFont.regular(12))
                                 .foregroundStyle(StoreTheme.textSecondary)
                         }
