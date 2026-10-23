@@ -451,7 +451,7 @@ struct StoreFavoriteButton: View {
                 .frame(width: 36, height: 36)
                 .background(StoreTheme.surface, in: Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.borderless)
         .accessibilityLabel(isFavorite ? "إزالة من المفضلة" : "إضافة إلى المفضلة")
     }
 }
