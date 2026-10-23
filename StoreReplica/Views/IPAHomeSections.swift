@@ -228,6 +228,13 @@ private struct IPAGlowAppCard: View {
                     Text(app.name)
                         .font(AppFont.bold(15)).foregroundStyle(.white)
                         .lineLimit(1)
+                    Text(app.categories?.first ?? (app.isDylibAsset ? "دايلب" : "تطبيق"))
+                        .font(AppFont.medium(11)).foregroundStyle(.white.opacity(0.64))
+                        .lineLimit(1)
+                    if !app.isDylibAsset {
+                        StoreFavoriteButton(app: app)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
                     Text([app.version.map { "v" + $0 }, sizeText].compactMap { $0 }.joined(separator: " · "))
                         .font(AppFont.medium(11)).foregroundStyle(.white.opacity(0.69))
                         .lineLimit(1)
@@ -244,12 +251,11 @@ private struct IPAGlowAppCard: View {
                         }
                     }
                 }.frame(maxWidth: .infinity, alignment: .trailing)
-                if !app.isDylibAsset { StoreFavoriteButton(app: app) }
                 AppIconView(app: app, size: 64)
             }
             .padding(16)
         }
-        .frame(height: 125)
+        .frame(height: 164)
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 24).stroke(.white.opacity(0.10), lineWidth: 0.8))
         .shadow(color: glow.opacity(0.10), radius: 8, y: 4)
