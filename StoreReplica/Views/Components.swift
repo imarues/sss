@@ -89,7 +89,7 @@ struct InstallPill: View {
                         .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(StoreTheme.onAccent)
                 }
-                Text(displayTitle)
+                Text(StoreLanguage.localized(displayTitle))
                     .font(AppFont.bold(13))
                     .foregroundStyle(StoreTheme.onAccent)
                     .lineLimit(1)
@@ -216,7 +216,7 @@ struct SigningSetupSheet: View {
             }
         }
         .preferredColorScheme(.dark)
-        .environment(\.layoutDirection, .rightToLeft)
+        .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
         .interactiveDismissDisabled(working)
         .sheet(isPresented: $pickingP12) {
             SigningFilePicker(allowedContentTypes: [.signingP12]) { urls in
@@ -301,13 +301,13 @@ struct SectionTitle: View {
     var body: some View {
         HStack(spacing: 8) {
             Spacer(minLength: 8)
-            Text(title.storeForcedRTL)
+            Text(StoreLanguage.localized(title).storeForcedRTL)
                 .font(AppFont.black(20))
                 .foregroundStyle(StoreTheme.textPrimary)
                 .multilineTextAlignment(.trailing)
         }
         .padding(.horizontal, StoreTheme.pageHorizontal)
-        .environment(\.layoutDirection, .rightToLeft)
+        .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
     }
 }
 
@@ -343,7 +343,7 @@ struct BandCard: View {
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
-        .environment(\.layoutDirection, .rightToLeft)
+        .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
         .padding(14).frame(width: 310, height: 166, alignment: .top).storeCard(radius: 19)
     }
 }
@@ -361,7 +361,7 @@ struct ShowcaseCard: View {
             if !app.isDylibAsset { StoreFavoriteButton(app: app) }
             InstallPill(app: app)
         }
-        .environment(\.layoutDirection, .rightToLeft)
+        .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
         .padding(16).frame(width: 168, height: 228).storeCard(radius: 22)
     }
 }
@@ -384,7 +384,7 @@ struct LargeListRow: View {
             }.frame(maxWidth: .infinity, alignment: .trailing)
             InstallPill(app: app)
         }
-        .environment(\.layoutDirection, .rightToLeft)
+        .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
         .padding(.vertical, 10)
     }
 }
@@ -402,7 +402,7 @@ struct CategoryStripCard: View {
                 if let count = category.count { Text("\(count) تطبيق".storeForcedRTL).font(AppFont.regular(10.5)).foregroundStyle(StoreTheme.textSecondary) }
             }
         }
-        .environment(\.layoutDirection, .rightToLeft)
+        .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
         .padding(.horizontal, 12).frame(height: 65).storeCard(radius: 17)
     }
 }
@@ -422,7 +422,7 @@ struct CategoryGridTile: View {
             Text(category.name.storeForcedRTL).font(AppFont.bold(14)).foregroundStyle(StoreTheme.textPrimary).lineLimit(1)
             if let count = category.count { Text("\(count) تطبيق".storeForcedRTL).font(AppFont.regular(10.5)).foregroundStyle(StoreTheme.textSecondary) }
         }
-        .environment(\.layoutDirection, .rightToLeft)
+        .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
         .padding(14).frame(height: 132).storeCard(radius: 20)
     }
 }
