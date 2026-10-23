@@ -1,0 +1,116 @@
+name: Classify IPA-AR with Apple on public repository
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - scripts/build_explore_index.py
+      - .github/workflows/refresh-explore.yml
+  schedule:
+    - cron: "17 */4 * * *"
+  workflow_dispatch:
+    inputs:
+      batch_size:
+        description: "Maximum app lookups per batch"
+        required: false
+        default: "300"
+      rounds:
+        description: "Number of batches (6 covers ~1,800 entries)"
+        required: false
+        default: "6"
+
+concurrency:
+  group: turath-public-explore-classifier
+  cancel-in-progress: false
+
+jobs:
+  classify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout the PUBLIC imarues/sss repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Test classifier and ensure correct repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "imarues/sss"
+          python3 scripts/build_explore_index.py --self-test
+          python3 -m json.tool explore-index.json >/dev/null
+
+      - name: Fetch public IPA-AR, prioritize Social and verify against Apple
+        shell: bash
+        env:
+          BATCH_SIZE: ${{ github.event.inputs.batch_size || '300' }}
+          ROUNDS: ${{ github.event.inputs.rounds || '6' }}
+        run: |
+          set -euo pipefail
+          [[ "$BATCH_SIZE" =~ ^[0-9]+$ ]] && [[ "$ROUNDS" =~ ^[0-9]+$ ]]
+          (( BATCH_SIZE >= 1 && BATCH_SIZE <= 1900 ))
+          (( ROUNDS >= 1 && ROUNDS <= 12 ))
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          echo "Only this public repo is allowed to publish this index: $GITHUB_REPOSITORY"
+          for round in $(seq 1 "$ROUNDS"); do
+            echo "::group::Apple verification batch $round / $ROUNDS"
+            python3 scripts/build_explore_index.py --max-queries "$BATCH_SIZE" --delay 1.3
+            python3 - <<'PY'
+          import json
+          source=json.load(open("data/IPA-AR.json"))
+          idx=json.load(open("explore-index.json"))
+          assert isinstance(source.get("apps"), list)
+          assert idx["schema"]==1 and idx["source"]=="https://ikiraplus.pages.dev/IPA-AR.json"
+          assert len(idx["categories"])==10
+          assert all(c["count"]==len(c["appIDs"]) for c in idx["categories"])
+          assert idx["checkedCount"] <= idx["eligibleCount"]
+          assert idx["verifiedCount"] <= idx["checkedCount"]
+          print("Verified index:",idx["checkedCount"],"checked of",idx["eligibleCount"],
+                "- social:",next(c["count"] for c in idx["categories"] if c["id"]=="social"))
+          PY
+            # Keep the generated files safe while fast-forwarding any unrelated
+            # commits added to main since checkout (never force-push).
+            cp explore-index.json "$RUNNER_TEMP/explore-index.json"
+            cp data/IPA-AR.json "$RUNNER_TEMP/IPA-AR.json"
+            published=false
+            for retry in 1 2 3 4; do
+              git fetch --no-tags origin main
+              git reset --hard origin/main
+              mkdir -p data
+              cp "$RUNNER_TEMP/explore-index.json" explore-index.json
+              cp "$RUNNER_TEMP/IPA-AR.json" data/IPA-AR.json
+              git add explore-index.json data/IPA-AR.json
+              if git diff --cached --quiet; then
+                echo "Nothing new to publish"
+                published=true
+                break
+              fi
+              git commit -m "Verify IPA-AR apps with Apple: batch $round [skip ci]"
+              if git push origin HEAD:main; then
+                published=true
+                break
+              fi
+              echo "Main moved concurrently; retrying safely without force-push"
+              sleep 3
+            done
+            test "$published" = true
+            echo "::endgroup::"
+            remaining=$(python3 -c 'import json;x=json.load(open("explore-index.json"));print(max(0,x["eligibleCount"]-x["checkedCount"]))')
+            echo "Remaining unchecked: $remaining"
+            if [ "$remaining" -eq 0 ]; then
+              echo "Every eligible IPA-AR record has been checked." >> "$GITHUB_STEP_SUMMARY"
+              break
+            fi
+          done
+          python3 - <<'PY'
+          import json
+          x=json.load(open("explore-index.json"))
+          print("Final verified coverage:",x["checkedCount"],"/",x["eligibleCount"])
+          print("Social Networking:",next(c["count"] for c in x["categories"] if c["id"]=="social"))
+          PY
