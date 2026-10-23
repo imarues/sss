@@ -209,11 +209,7 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
             expectedBytes: app.fileSize ?? 0
         )
 
-        guard SigningAssetProvider.hasCredentials else {
-            publishFailure(appID: app.id, text: StoreInstallError.missingSigningAssets.localizedDescription)
-            return
-        }
-
+        // Download and preserve IPA even when a certificate is not yet set up.
         setJob(job)
         if let staged = existingStagedIPA(job) {
             beginSigning(job: job, stagedIPA: staged, startLiveActivity: true)
@@ -382,6 +378,20 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
     }
 
     private func beginSigning(job: StoreInstallJob, stagedIPA: URL, startLiveActivity: Bool) {
+        // Export the unmodified source into Downloads before any signing attempt.
+        // Never make certificate problems invalidate or remove this saved IPA.
+        _ = StoreDownloadStorage.exportToFiles(stagedURL: stagedIPA, job: job)
+        guard SigningAssetProvider.hasCredentials else {
+            publish(
+                appID: job.appID,
+                state: StoreInstallState(
+                    phase: .ready,
+                    progress: 1,
+                    message: "تم حفظ IPA في تنزيلاتي. أضف شهادة صالحة ثم أعد المحاولة."
+                )
+            )
+            return
+        }
         if startLiveActivity { InstallLiveActivityBridge.begin(job: job) }
 
         // Exactly like BatSign's ServerInstaller: bind 9800 before archive work
