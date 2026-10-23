@@ -40,6 +40,66 @@ enum SigningAssetProvider {
         let password: String
     }
 
+    struct CertificateDetails {
+        let name: String
+        let profileUUID: String
+        let expiration: Date
+        let provisionedUDIDs: [String]
+    }
+
+    static func details(credentials: Credentials) throws -> CertificateDetails {
+        let p12Data = try Data(contentsOf: credentials.p12)
+        let provisionData = try Data(contentsOf: credentials.mobileProvision)
+        return try details(p12Data: p12Data, provisionData: provisionData, password: credentials.password)
+    }
+
+    static func currentCertificateDetails() throws -> CertificateDetails {
+        try details(credentials: credentials())
+    }
+
+    static func details(p12Data: Data, provisionData: Data, password: String) throws -> CertificateDetails {
+        let certData = try identityCertificateData(p12Data: p12Data, password: password)
+        let profile = try provisionDictionary(data: provisionData)
+        try validate(identityCertificate: certData, provision: profile)
+        guard let expires = profile["ExpirationDate"] as? Date,
+              let identifier = profile["UUID"] as? String else {
+            throw SigningAssetError.invalidProvision
+        }
+        let cert = SecCertificateCreateWithData(nil, certData as CFData)
+        let subject = cert.flatMap { SecCertificateCopySubjectSummary($0) as String? }
+        let name = (subject?.isEmpty == false ? subject : nil)
+            ?? (profile["Name"] as? String)
+            ?? "Certificate"
+        return CertificateDetails(
+            name: name,
+            profileUUID: identifier,
+            expiration: expires,
+            provisionedUDIDs: profile["ProvisionedDevices"] as? [String] ?? []
+        )
+    }
+
+    /// Switch the certificate used by the existing signing engine.
+    /// Validation occurs before replacing any active signing assets.
+    static func activateArchive(p12Data: Data, provisionData: Data, password: String) throws {
+        _ = try details(p12Data: p12Data, provisionData: provisionData, password: password)
+        guard let p12Target = storedP12, let provisionTarget = storedProvision else {
+            throw StoreInstallError.missingSigningAssets
+        }
+        let oldP12 = try? Data(contentsOf: p12Target)
+        let oldProvision = try? Data(contentsOf: provisionTarget)
+        let oldPassword = loadPassword()
+        do {
+            try p12Data.write(to: p12Target, options: [.atomic, .completeFileProtectionUnlessOpen])
+            try provisionData.write(to: provisionTarget, options: [.atomic, .completeFileProtectionUnlessOpen])
+            try savePassword(password)
+        } catch {
+            if let oldP12 { try? oldP12.write(to: p12Target, options: .atomic) }
+            if let oldProvision { try? oldProvision.write(to: provisionTarget, options: .atomic) }
+            if let oldPassword { try? savePassword(oldPassword) }
+            throw error
+        }
+    }
+
     private static let keychainService = "com.ikiraplus.turathreplica.signing"
     private static let keychainAccount = "p12-password"
 
