@@ -172,14 +172,14 @@ struct SearchView: View {
                             if !app.isDylibAsset {
                                 StoreFavoriteButton(app: app)
                                     .frame(maxWidth: .infinity, alignment: .trailing)
-                                if let notes = app.notes, !notes.isEmpty {
+                            }
+                            if let notes = app.notes, !notes.isEmpty {
                                 Text(notes)
                                     .font(AppFont.regular(10.5))
                                     .foregroundStyle(StoreTheme.textSecondary)
                                     .lineLimit(1)
                                     .frame(maxWidth: .infinity, alignment: .trailing)
                             }
-                        }
                         }
 
                         if app.isDylibAsset {
