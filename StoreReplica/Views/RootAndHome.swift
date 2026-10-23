@@ -234,8 +234,8 @@ struct BannerCarousel: View {
                     RemoteImage(path: banner.imageUrl, cornerRadius: 24).frame(height: 184)
                     LinearGradient(colors: [.clear, .black.opacity(0.72)], startPoint: .top, endPoint: .bottom).clipShape(RoundedRectangle(cornerRadius: 24))
                     VStack(alignment: .trailing, spacing: 4) {
-                        if let title = banner.title { Text(title).font(AppFont.black(19)).foregroundStyle(.white) }
-                        if let subtitle = banner.subtitle { Text(subtitle).font(AppFont.medium(11.5)).foregroundStyle(.white.opacity(0.8)).lineLimit(2) }
+                        if let title = banner.title { Text(StoreLanguage.localized(title)).font(AppFont.black(19)).foregroundStyle(.white) }
+                        if let subtitle = banner.subtitle { Text(StoreLanguage.localized(subtitle)).font(AppFont.medium(11.5)).foregroundStyle(.white.opacity(0.8)).lineLimit(2) }
                     }.padding(17)
                 }.padding(.horizontal, StoreTheme.pageHorizontal)
             }
