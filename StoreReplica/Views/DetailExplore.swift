@@ -107,7 +107,7 @@ struct AppDetailView: View {
                 detailTopBar
                     .padding(.top, 7)
 
-                Spacer().frame(height: 62)
+                Spacer().frame(height: 23)
 
                 AppIconView(app: app, size: 122)
                     .shadow(color: .black.opacity(0.34), radius: 22, y: 10)
@@ -210,7 +210,13 @@ struct AppDetailView: View {
                 .padding(.horizontal, 126)
 
             HStack(spacing: 10) {
-                categoryBadge
+                VStack(alignment: .leading, spacing: 5) {
+                    categoryBadge
+                    if !app.isDylibAsset {
+                        StoreFavoriteButton(app: app)
+                            .accessibilityIdentifier("detail.favorite")
+                    }
+                }
 
                 Spacer(minLength: 8)
 
@@ -230,7 +236,7 @@ struct AppDetailView: View {
             }
             .environment(\.layoutDirection, .leftToRight)
         }
-        .frame(height: 54)
+        .frame(height: 96, alignment: .top)
         .padding(.horizontal, 16)
     }
 
