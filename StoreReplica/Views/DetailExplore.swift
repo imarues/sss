@@ -226,7 +226,7 @@ struct AppDetailView: View {
                     .foregroundStyle(StoreTheme.accent)
                 }
                 .buttonStyle(.plain)
-                .environment(\.layoutDirection, .rightToLeft)
+                .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
             }
             .environment(\.layoutDirection, .leftToRight)
         }
@@ -253,7 +253,7 @@ struct AppDetailView: View {
             Capsule()
                 .stroke(StoreTheme.accent.opacity(0.12), lineWidth: 0.8)
         }
-        .environment(\.layoutDirection, .rightToLeft)
+        .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
     }
 
     private func detailActionButton(title: String, icon: String, action: @escaping () -> Void) -> some View {
@@ -277,7 +277,7 @@ struct AppDetailView: View {
             }
         }
         .buttonStyle(.plain)
-        .environment(\.layoutDirection, .rightToLeft)
+        .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
     }
 
     private var detailInfo: some View {
@@ -318,7 +318,7 @@ struct AppDetailView: View {
                 .foregroundStyle(StoreTheme.textSecondary)
         }
         .frame(maxWidth: .infinity)
-        .environment(\.layoutDirection, .rightToLeft)
+        .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
     }
 
     private func notesSection(_ notes: String) -> some View {
@@ -334,7 +334,7 @@ struct AppDetailView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 18)
-        .environment(\.layoutDirection, .rightToLeft)
+        .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
     }
 
     @ViewBuilder
@@ -452,7 +452,7 @@ struct AppDetailView: View {
                 .foregroundStyle(StoreTheme.textPrimary)
                 .frame(maxWidth: .infinity, alignment: .trailing)
                 .padding(.horizontal, 18)
-                .environment(\.layoutDirection, .rightToLeft)
+                .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 12) {
