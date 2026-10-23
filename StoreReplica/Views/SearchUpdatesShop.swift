@@ -366,14 +366,18 @@ struct ProductCard: View {
 struct StoreSettingsView: View {
     @EnvironmentObject private var store: StoreViewModel
     @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var certificateVault = SigningCertificateVault.shared
     @AppStorage("store.favoriteIDs") private var favoriteIDs = ""
     @AppStorage("store.language") private var selectedLanguage = "ar"
     @State private var favoriteApps: [StoreApp] = []
+    @State private var selectedFavorite: StoreApp?
+    @State private var showCertificates = false
+
     var body: some View {
         ZStack {
             StoreTheme.background.ignoresSafeArea()
             ScrollView {
-                VStack(spacing: 18) {
+                LazyVStack(spacing: 18) {
                     HStack {
                         Button("إغلاق") { dismiss() }
                             .font(AppFont.bold(13))
@@ -382,6 +386,7 @@ struct StoreSettingsView: View {
                         Text("الحساب").font(AppFont.black(20)).foregroundStyle(StoreTheme.textPrimary)
                     }
                     ticket
+                    certificateManagerRow
                     favoritesSection
                     VStack(spacing: 0) {
                         settingRow("عدد التطبيقات", "\((store.catalog.total ?? store.searchMeta.totalApps ?? 0).formatted())", "square.stack.3d.up.fill")
@@ -389,94 +394,157 @@ struct StoreSettingsView: View {
                         settingRow("نمط التصميم", "Night", "moon.stars.fill")
                         Divider().overlay(StoreTheme.surfaceBorder)
                         HStack {
-                            Picker("اللغة / Language", selection: $selectedLanguage) {
+                            Picker("لغة المتجر", selection: $selectedLanguage) {
                                 Text("العربية").tag("ar")
                                 Text("English").tag("en")
-                            }.pickerStyle(.menu)
+                            }
+                            .pickerStyle(.menu)
                             Spacer()
-                            Image(systemName: "globe").foregroundStyle(StoreTheme.accent)
+                            Text("لغة المتجر").font(AppFont.medium(13)).foregroundStyle(StoreTheme.textPrimary)
+                            Image(systemName: "globe").foregroundStyle(StoreTheme.accent).frame(width: 24)
                         }.frame(height: 48)
                     }
                     .padding(.horizontal, 14)
-                    .storeCard()
-                    VStack(alignment: .trailing, spacing: 9) {
-                        Text("ربط الـAPI").font(AppFont.bold(15)).foregroundStyle(StoreTheme.textPrimary)
-                        Text("النسخة لا تضع UDID الذي ظهر في ملف المراقبة داخل الريبو العام. إذا كان خادمك يتطلب UDID، خزّنه محليًا بالمفتاح store.deviceUDID أو اربطه بباكندك الخاص.")
-                            .font(AppFont.regular(11))
-                            .foregroundStyle(StoreTheme.textSecondary)
-                    }
-                    .padding(16)
                     .storeCard()
                 }
                 .padding(16)
             }
         }
-        .task { favoriteApps = (try? await KiraSourceSearchService.shared.catalog()) ?? [] }
+        .sheet(isPresented: $showCertificates) {
+            SigningCertificateManagerView()
+        }
+        .sheet(item: $selectedFavorite) { app in
+            NavigationStack { AppDetailView(app: app) }
+        }
+        .task {
+            certificateVault.refresh()
+            if let home = try? await KiraSourceSearchService.shared.homeCollections() {
+                favoriteApps = home.apps
+            }
+        }
+    }
+
+    private var certificateManagerRow: some View {
+        Button { showCertificates = true } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(StoreTheme.textSecondary)
+                if let active = certificateVault.active {
+                    Text(active.name).font(AppFont.medium(11))
+                        .foregroundStyle(StoreTheme.textSecondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 5) {
+                    Text("إدارة الشهادات").font(AppFont.bold(16))
+                        .foregroundStyle(StoreTheme.textPrimary)
+                    Text("\(certificateVault.certificates.count) شهادة محفوظة")
+                        .font(AppFont.medium(11))
+                        .foregroundStyle(StoreTheme.textSecondary)
+                }
+                Image(systemName: "checkmark.shield.fill")
+                    .font(.system(size: 23))
+                    .foregroundStyle(StoreTheme.accent)
+            }
+            .padding(16)
+            .storeCard(radius: 21)
+        }
+        .buttonStyle(.plain)
     }
 
     private var favoritesSection: some View {
         let ids = favoriteIDs.split(separator: "\n").map(String.init)
-        let favorites = ids.compactMap { id in favoriteApps.first { $0.id == id && !$0.isDylibAsset } }
+        let catalog = Dictionary(favoriteApps.map { ($0.id, $0) },
+                                 uniquingKeysWith: { first, _ in first })
+        let favorites = ids.compactMap { catalog[$0] }.filter { !$0.isDylibAsset }
         return VStack(alignment: .trailing, spacing: 12) {
             HStack {
-                Text("\(favorites.count)/25").font(AppFont.medium(12)).foregroundStyle(StoreTheme.textSecondary)
+                Text("\(favorites.count)/25")
+                    .font(AppFont.medium(12)).foregroundStyle(StoreTheme.textSecondary)
                 Spacer()
                 Text("المفضلة").font(AppFont.bold(18)).foregroundStyle(StoreTheme.textPrimary)
                 Image(systemName: "heart.fill").foregroundStyle(.red)
             }
             if favorites.isEmpty {
-                Text("اضغط القلب على أي تطبيق أو لعبة لإضافتها هنا")
-                    .font(AppFont.medium(12)).foregroundStyle(StoreTheme.textSecondary)
+                Text("اضغط القلب أسفل تصنيف أي تطبيق أو لعبة لإضافتها هنا")
+                    .font(AppFont.medium(12))
+                    .foregroundStyle(StoreTheme.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .trailing)
             } else {
-                LazyVStack(spacing: 8) {
+                LazyVStack(spacing: 10) {
                     ForEach(favorites) { app in
-                        HStack(spacing: 8) {
+                        HStack(spacing: 10) {
                             StoreFavoriteButton(app: app)
-                            AppIconView(app: app, size: 44)
-                            Text(app.name).font(AppFont.bold(13)).foregroundStyle(StoreTheme.textPrimary)
-                                .frame(maxWidth: .infinity, alignment: .trailing)
-                        }.padding(10).background(StoreTheme.surface, in: RoundedRectangle(cornerRadius: 15))
+                            Button { selectedFavorite = app } label: {
+                                HStack(spacing: 10) {
+                                    VStack(alignment: .trailing, spacing: 3) {
+                                        Text(app.name)
+                                            .font(AppFont.bold(13))
+                                            .foregroundStyle(.white).lineLimit(1)
+                                        Text(app.categories?.first ?? "تطبيق")
+                                            .font(AppFont.medium(10))
+                                            .foregroundStyle(.white.opacity(0.58))
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .trailing)
+                                    AppIconView(app: app, size: 49)
+                                }
+                            }.buttonStyle(.plain)
+                        }
+                        .padding(11)
+                        .background(
+                            LinearGradient(colors: [StoreTheme.accent.opacity(0.28),
+                                                    StoreTheme.surface],
+                                           startPoint: .topLeading, endPoint: .bottomTrailing),
+                            in: RoundedRectangle(cornerRadius: 17)
+                        )
+                        .overlay(RoundedRectangle(cornerRadius: 17).stroke(.white.opacity(0.07)))
                     }
                 }
             }
-        }.padding(16).storeCard()
+        }
+        .padding(16)
+        .storeCard(radius: 21)
     }
 
     private var ticket: some View {
-        VStack(spacing: 15) {
+        let current = certificateVault.active
+        return VStack(spacing: 15) {
             HStack {
                 VStack(alignment: .trailing, spacing: 5) {
-                    Text(store.catalog.subscription?.planName ?? "الباقة الملكية")
+                    Text(current == nil ? "لا توجد شهادة" : "شهادة سنوية")
                         .font(AppFont.black(21))
                         .foregroundStyle(.white)
-                    Text("اشتراك فعال")
+                    Text(current == nil ? "أضف شهادة للبدء" :
+                         (current!.isValid ? "اشتراك فعال" : "الشهادة منتهية"))
                         .font(AppFont.medium(11))
-                        .foregroundStyle(.white.opacity(0.7))
+                        .foregroundStyle(.white.opacity(0.75))
                 }
                 Spacer()
-                Image(systemName: "crown.fill")
+                Image(systemName: "checkmark.seal.fill")
                     .font(.system(size: 32))
                     .foregroundStyle(.white)
             }
             Divider().overlay(Color.white.opacity(0.18))
             HStack {
-                Text(store.catalog.subscription?.deviceModel ?? "iPhone")
+                Text(SigningCertificateVault.actualDeviceName)
                     .font(AppFont.bold(12))
                     .foregroundStyle(.white)
+                    .lineLimit(1)
                 Spacer()
-                Text("حتى \(shortDate(store.catalog.subscription?.expiresAt))")
-                    .font(AppFont.regular(11))
-                    .foregroundStyle(.white.opacity(0.75))
+                if let current {
+                    Text(current.expiresAt, format: .dateTime.year().month().day())
+                        .font(AppFont.regular(11))
+                        .foregroundStyle(.white.opacity(0.85))
+                } else {
+                    Text("—").font(AppFont.regular(11)).foregroundStyle(.white.opacity(0.7))
+                }
             }
         }
         .padding(18)
         .background(
-            LinearGradient(
-                colors: [StoreTheme.accent.opacity(0.82), Color(hex: "#384B8D")],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
+            LinearGradient(colors: [StoreTheme.accent.opacity(0.82), Color(hex: "#384B8D")],
+                           startPoint: .topLeading, endPoint: .bottomTrailing)
         )
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
@@ -489,10 +557,5 @@ struct StoreSettingsView: View {
             Image(systemName: icon).foregroundStyle(StoreTheme.accent).frame(width: 24)
         }
         .frame(height: 48)
-    }
-
-    private func shortDate(_ value: String?) -> String {
-        guard let value else { return "—" }
-        return String(value.prefix(10))
     }
 }
