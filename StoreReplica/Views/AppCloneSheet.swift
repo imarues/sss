@@ -86,15 +86,13 @@ struct AppCloneSheet: View {
 
     private func startDuplicate() {
         guard customIsValid else { return }
-        let target = duplicateApp
-        TransferActivityCenter.shared.track(target)
+        let number = effectiveNumber
         dismiss()
 
-        // Always show the certificate step for a duplicate request. After the
-        // user confirms/imports it, SigningSetupCoordinator starts this exact
-        // target through StoreInstallCoordinator's normal GET -> stage -> sign
-        // flow. The bundle override is therefore applied by Zsign during sign.
-        SigningSetupCoordinator.shared.request(for: target)
+        // Use the durable original-IPA preparation flow shared with injection.
+        // The prepared clone is staged before signing, and an existing valid
+        // certificate is reused instead of asking for it on every duplicate.
+        DetailPreparationCenter.shared.beginDuplicate(app: app, number: number)
     }
 
     private var header: some View {
