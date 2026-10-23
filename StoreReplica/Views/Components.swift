@@ -394,7 +394,7 @@ struct CategoryStripCard: View {
             }.frame(width: 43, height: 43)
             VStack(alignment: .trailing, spacing: 2) {
                 Text(category.name.storeForcedRTL).font(AppFont.bold(13)).foregroundStyle(StoreTheme.textPrimary).lineLimit(1)
-                if let count = category.count { Text("\(count) " + StoreLanguage.localized("تطبيق")).font(AppFont.regular(10.5)).foregroundStyle(StoreTheme.textSecondary) }
+                if let count = category.count { Text(StoreLanguage.isEnglish ? "\(count) apps" : "\(count) تطبيق").font(AppFont.regular(10.5)).foregroundStyle(StoreTheme.textSecondary) }
             }
         }
         .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
@@ -415,7 +415,7 @@ struct CategoryGridTile: View {
             }
             Spacer(minLength: 2)
             Text(category.name.storeForcedRTL).font(AppFont.bold(14)).foregroundStyle(StoreTheme.textPrimary).lineLimit(1)
-            if let count = category.count { Text("\(count) " + StoreLanguage.localized("تطبيق")).font(AppFont.regular(10.5)).foregroundStyle(StoreTheme.textSecondary) }
+            if let count = category.count { Text(StoreLanguage.isEnglish ? "\(count) apps" : "\(count) تطبيق").font(AppFont.regular(10.5)).foregroundStyle(StoreTheme.textSecondary) }
         }
         .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
         .padding(14).frame(height: 132).storeCard(radius: 20)
