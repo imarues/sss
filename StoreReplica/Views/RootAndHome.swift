@@ -46,8 +46,8 @@ struct SplashView: View {
                     Image(systemName: "sparkles.rectangle.stack.fill").font(.system(size: 48, weight: .bold)).foregroundStyle(.white)
                 }.scaleEffect(breathe ? 1.04 : 0.96)
                 VStack(spacing: 9) {
-                    Text(spec?.title ?? "التراث بلس").font(AppFont.black(31)).foregroundStyle(.white)
-                    Text(spec?.subtitle ?? "أقوى متجر لتطبيقات البلس والاشتراكات الرقمية")
+                    Text(StoreLanguage.localized(spec?.title ?? "التراث بلس")).font(AppFont.black(31)).foregroundStyle(.white)
+                    Text(StoreLanguage.localized(spec?.subtitle ?? "أقوى متجر لتطبيقات البلس والاشتراكات الرقمية"))
                         .font(AppFont.medium(13)).foregroundStyle(Color.white.opacity(0.74)).multilineTextAlignment(.center).padding(.horizontal, 40)
                 }
                 if let count = spec?.appCount {
@@ -179,10 +179,10 @@ struct StoreHeader: View {
             Spacer()
 
             VStack(alignment: .trailing, spacing: 1) {
-                Text(store.config.storeName ?? "التراث بلس")
+                Text(StoreLanguage.localized(store.config.storeName ?? "التراث بلس"))
                     .font(AppFont.black(18))
                     .foregroundStyle(StoreTheme.textPrimary)
-                Text(store.config.tagline ?? "متجر التطبيقات")
+                Text(StoreLanguage.localized(store.config.tagline ?? "متجر التطبيقات"))
                     .font(AppFont.regular(10.5))
                     .foregroundStyle(StoreTheme.textSecondary)
                     .lineLimit(1)
