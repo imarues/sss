@@ -415,11 +415,11 @@ struct StoreSettingsView: View {
     }
 
     private var favoritesSection: some View {
-        let ids = favoriteIDs.split(separator: "\\n").map(String.init)
+        let ids = favoriteIDs.split(separator: "\n").map(String.init)
         let favorites = ids.compactMap { id in favoriteApps.first { $0.id == id && !$0.isDylibAsset } }
         return VStack(alignment: .trailing, spacing: 12) {
             HStack {
-                Text("\\(favorites.count)/25").font(AppFont.medium(12)).foregroundStyle(StoreTheme.textSecondary)
+                Text("\(favorites.count)/25").font(AppFont.medium(12)).foregroundStyle(StoreTheme.textSecondary)
                 Spacer()
                 Text("المفضلة").font(AppFont.bold(18)).foregroundStyle(StoreTheme.textPrimary)
                 Image(systemName: "heart.fill").foregroundStyle(.red)
