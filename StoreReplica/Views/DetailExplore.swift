@@ -656,43 +656,10 @@ private struct AppleScreenshotCard: View {
     }
 }
 
+// The previous decorative API category grid is retired.
+// Explore now shows only Apple-verified categories of published IPA-AR apps.
 struct ExploreView: View {
-    @EnvironmentObject private var store: StoreViewModel
-    private let columns = [
-        GridItem(.flexible(), spacing: 12),
-        GridItem(.flexible(), spacing: 12)
-    ]
-
     var body: some View {
-        NavigationView {
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: 22) {
-                    StoreHeader()
-                    HStack {
-                        VStack(alignment: .trailing, spacing: 5) {
-                            Text("استكشف")
-                                .font(AppFont.black(29))
-                                .foregroundStyle(StoreTheme.textPrimary)
-                            Text(StoreLanguage.isEnglish ? "Explore over \((store.explore.totalApps ?? store.catalog.total ?? 0).formatted()) apps and games" : "اكتشف أكثر من \((store.explore.totalApps ?? store.catalog.total ?? 0).formatted()) تطبيق ولعبة")
-                                .font(AppFont.regular(12))
-                                .foregroundStyle(StoreTheme.textSecondary)
-                        }
-                        Spacer()
-                    }
-                    .padding(.horizontal, StoreTheme.pageHorizontal)
-
-                    LazyVGrid(columns: columns, spacing: 12) {
-                        ForEach(store.explore.categories ?? []) {
-                            CategoryGridTile(category: $0)
-                        }
-                    }
-                    .padding(.horizontal, StoreTheme.pageHorizontal)
-                }
-                .padding(.bottom, 20)
-            }
-            .background(StoreTheme.background)
-            .navigationBarHidden(true)
-        }
-        .navigationViewStyle(.stack)
+        VerifiedExploreView()
     }
 }
