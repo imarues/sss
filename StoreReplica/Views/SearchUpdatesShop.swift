@@ -373,6 +373,7 @@ struct ProductCard: View {
     }
 }
 
+@MainActor
 struct StoreSettingsView: View {
     @EnvironmentObject private var store: StoreViewModel
     @Environment(\.dismiss) private var dismiss
