@@ -310,6 +310,16 @@ enum SigningAssetProvider {
             }
         }
 
+        // The fast Security.framework path succeeded: avoid an unnecessary
+        // second PKCS12 parse on every settings/certificate validation.
+        if let expectedCertificates, !expectedCertificates.isEmpty,
+           let matched = candidates.first(where: { expectedCertificates.contains($0) }) {
+            return matched
+        }
+        if expectedCertificates == nil, let first = candidates.first {
+            return first
+        }
+
         // OpenSSL 3 (already used by the signing engine) can decode modern
         // AES/PBES2 PKCS12 files that Security.framework sometimes rejects.
         if let fallback = Zsign.certificateDER(p12Data: p12Data, password: password),
