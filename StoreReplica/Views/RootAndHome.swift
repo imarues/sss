@@ -5,6 +5,7 @@ import CoreText
 struct RootStoreView: View {
     @EnvironmentObject private var store: StoreViewModel
     @State private var splashVisible = true
+    @AppStorage("store.language") private var language = "ar"
 
     var body: some View {
         ZStack {
@@ -16,6 +17,8 @@ struct RootStoreView: View {
             }
         }
         .background(StoreTheme.background.ignoresSafeArea())
+        .environment(\.locale, Locale(identifier: language))
+        .environment(\.layoutDirection, language == "en" ? .leftToRight : .rightToLeft)
         .task {
             async let data: Void = store.load()
             let seconds = store.config.splash?.seconds ?? 3
@@ -101,7 +104,7 @@ struct FloatingStoreTabBar: View {
                 } label: {
                     VStack(spacing: 5) {
                         Image(systemName: tab.icon).font(.system(size: 17, weight: .semibold))
-                        Text(tab.rawValue).font(AppFont.medium(9.5)).lineLimit(1)
+                        Text(LocalizedStringKey(tab.rawValue)).font(AppFont.medium(9.5)).lineLimit(1)
                     }
                     .foregroundStyle(selected == tab ? StoreTheme.accent : StoreTheme.tabInactive)
                     .frame(maxWidth: .infinity, minHeight: 54)
