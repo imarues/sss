@@ -189,8 +189,9 @@ final class SigningCertificateVault: ObservableObject {
         if !name.isEmpty && !["iPhone", "iPad"].contains(name) { return name }
         var system = utsname()
         uname(&system)
+        let machineCapacity = MemoryLayout.size(ofValue: system.machine)
         let identifier = withUnsafePointer(to: &system.machine) {
-            $0.withMemoryRebound(to: CChar.self, capacity: MemoryLayout.size(ofValue: system.machine)) {
+            $0.withMemoryRebound(to: CChar.self, capacity: machineCapacity) {
                 String(cString: $0)
             }
         }
