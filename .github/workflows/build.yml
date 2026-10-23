@@ -3,7 +3,16 @@ name: Build IPA
 on:
   workflow_dispatch:
   push:
-    branches: [main, batsign-backend-port, batsign-root-fix, download-engine-root-fix, feature/turath-signing-hub]
+    branches:
+      - main
+      - batsign-backend-port
+      - batsign-root-fix
+      - download-engine-root-fix
+      - feature/turath-signing-hub
+
+concurrency:
+  group: ipa-build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -15,14 +24,20 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Verify vendored BatSign Zsign
+      - name: Verify bundled signing sources and core UI wiring
         run: |
           set -euo pipefail
           test -f Vendor/Zsign/Package.swift
-          test -f Vendor/Zsign/Sources/zsign.swift
-          test -f Vendor/Zsign/src/zsign.cpp
           test -f Vendor/Zsign/src/zsign.mm
-          echo "Using local BatSign Zsign source from Vendor/Zsign"
+          test -f Vendor/Zsign/Sources/zsign.swift
+          test -f StoreReplica/Views/SigningCertificateManager.swift
+          test -f StoreReplica/Core/SigningCertificateVault.swift
+          test -f StoreReplica/Views/StoreFavoritesView.swift
+          test -f StoreReplica/en.lproj/Localizable.strings
+          grep -q 'ZsignExtractP12Certificate' Vendor/Zsign/src/zsign.mm
+          grep -q 'StoreFavoriteButton(app: app)' StoreReplica/Views/DetailExplore.swift
+          grep -q 'showFavorites = true' StoreReplica/Views/SearchUpdatesShop.swift
+          grep -q 'StoreLanguage.localized' StoreReplica/Views/IPAHomeSections.swift
 
       - name: Install XcodeGen
         run: |
@@ -31,9 +46,7 @@ jobs:
             xcodegen --version
             exit 0
           fi
-
           for attempt in 1 2 3; do
-            echo "XcodeGen install attempt $attempt"
             if brew install xcodegen; then
               xcodegen --version
               exit 0
@@ -41,14 +54,13 @@ jobs:
             sleep $((attempt * 5))
             brew update --force --quiet || true
           done
-
-          echo "Unable to install XcodeGen after retries"
+          echo "::error::Unable to install XcodeGen"
           exit 1
 
       - name: Generate Xcode project
         run: xcodegen generate
 
-      - name: Build unsigned device app
+      - name: Build unsigned device application
         run: |
           set -o pipefail
           if ! xcodebuild \
@@ -62,29 +74,73 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             build > build.log 2>&1; then
             echo "===== XCODE ERRORS ====="
-            grep -n -E "error:|fatal error:" build.log | tail -120 || true
+            grep -n -E "error:|fatal error:" build.log | tail -140 || true
             echo "===== BUILD TAIL ====="
-            tail -120 build.log
+            tail -160 build.log
             exit 1
           fi
 
-      - name: Package unsigned IPA
+      - name: Validate and package unsigned IPA
         run: |
           set -euo pipefail
           APP="build/Build/Products/Release-iphoneos/TurathReplica.app"
           test -f "$APP/Info.plist"
           test -f "$APP/TurathReplica"
+          plutil -lint "$APP/Info.plist"
+          file "$APP/TurathReplica" | grep -q 'Mach-O'
+          # A missing English .strings resource would break the language switch.
+          test -f "$APP/en.lproj/Localizable.strings" || {
+            echo "::error::English translations were not included in the application bundle."
+            exit 1
+          }
           mkdir -p Payload
           cp -R "$APP" Payload/
           zip -qry TurathReplica-unsigned.ipa Payload
           unzip -tq TurathReplica-unsigned.ipa
           unzip -Z1 TurathReplica-unsigned.ipa | grep -Fqx 'Payload/TurathReplica.app/Info.plist'
           unzip -Z1 TurathReplica-unsigned.ipa | grep -Fqx 'Payload/TurathReplica.app/TurathReplica'
+          shasum -a 256 TurathReplica-unsigned.ipa
 
-      - name: Upload IPA
+      - name: Upload unsigned IPA to GitHub Actions artifact
         uses: actions/upload-artifact@v4
         with:
           name: TurathReplica-unsigned
           path: TurathReplica-unsigned.ipa
           if-no-files-found: error
           compression-level: 0
+          retention-days: 30
+
+  report:
+    name: Record build outcome for follow-up validation
+    needs: build
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Save run ID, commit and build result on reporting branch
+        shell: bash
+        env:
+          RESULT: ${{ needs.build.result }}
+          SOURCE_SHA: ${{ github.sha }}
+          BUILD_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --heads origin build-status >/dev/null 2>&1; then
+            git fetch --no-tags origin build-status
+            git checkout -B build-status FETCH_HEAD
+          else
+            git checkout -b build-status
+          fi
+          mkdir -p ci
+          printf '{"source_sha":"%s","conclusion":"%s","run_id":%s,"run_url":"https://github.com/%s/actions/runs/%s","artifact":"TurathReplica-unsigned"}\n' \
+            "$SOURCE_SHA" "$RESULT" "$BUILD_RUN_ID" "$GITHUB_REPOSITORY" "$BUILD_RUN_ID" > "ci/$SOURCE_SHA.json"
+          cp "ci/$SOURCE_SHA.json" ci/latest.json
+          git add ci
+          git commit -m "Record IPA build result for $SOURCE_SHA [skip ci]"
+          git push origin HEAD:refs/heads/build-status
