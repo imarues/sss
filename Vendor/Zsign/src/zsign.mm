@@ -21,8 +21,49 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <openssl/asn1.h>
+#include <openssl/pkcs12.h>
+#include <openssl/provider.h>
 
 extern "C" {
+
+// Return only a certificate backed by a real matching private key.
+// Security.framework rejects some valid modern OpenSSL PKCS#12 formats.
+NSData *ZsignExtractP12Certificate(NSData *p12Data, NSString *password) {
+    if (!p12Data || p12Data.length == 0 || !password) { return nil; }
+#if OPENSSL_VERSION_MAJOR >= 3
+    OSSL_PROVIDER_load(NULL, "default");
+    OSSL_PROVIDER_load(NULL, "legacy");
+#endif
+    const unsigned char *cursor = (const unsigned char *)p12Data.bytes;
+    PKCS12 *container = d2i_PKCS12(NULL, &cursor, (long)p12Data.length);
+    if (!container) { return nil; }
+
+    EVP_PKEY *privateKey = NULL;
+    X509 *certificate = NULL;
+    STACK_OF(X509) *otherCertificates = NULL;
+    NSData *result = nil;
+
+    const char *passphrase = [password UTF8String];
+    int parsed = PKCS12_parse(container, passphrase, &privateKey,
+                              &certificate, &otherCertificates);
+    if (parsed == 1 && privateKey && certificate &&
+        X509_check_private_key(certificate, privateKey) == 1) {
+        int length = i2d_X509(certificate, NULL);
+        if (length > 0) {
+            NSMutableData *der = [NSMutableData dataWithLength:(NSUInteger)length];
+            unsigned char *output = (unsigned char *)der.mutableBytes;
+            if (i2d_X509(certificate, &output) == length) {
+                result = der;
+            }
+        }
+    }
+    if (privateKey) { EVP_PKEY_free(privateKey); }
+    if (certificate) { X509_free(certificate); }
+    if (otherCertificates) { sk_X509_pop_free(otherCertificates, X509_free); }
+    PKCS12_free(container);
+    return result;
+}
+
 
 bool CheckIfSigned(NSString *filePath) {
 	ZTimer gtimer;
