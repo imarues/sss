@@ -104,6 +104,7 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
             self.statusText = "جاري استكمال العملية"
         }
         InstallLiveActivityBridge.begin(job: liveJob(for: current))
+        StoreInstallKeepAlive.shared.begin("detail-download-\(current.id)")
 
         session.getAllTasks { [weak self] tasks in
             guard let self, self.record(id: current.id) != nil else { return }
@@ -332,6 +333,7 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
             rescueTasks[record.id] = task
             rescueFiles[record.id] = (partial, handle, 0, 0)
             lock.unlock()
+            StoreInstallKeepAlive.shared.begin("detail-download-\(record.id)")
             task.taskDescription = record.id
             task.resume()
         } catch {
@@ -356,6 +358,7 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
 
         let hold = "detail-preparation-\(record.id)"
         StoreInstallKeepAlive.shared.begin(hold)
+        StoreInstallKeepAlive.shared.end("detail-download-\(record.id)")
         publishProgress(
             0.56,
             text: record.kind == .duplicate ? "اكتمل التحميل · جاري تعديل الباندل" : "اكتمل التحميل · جاري حقن الديلب",
@@ -456,6 +459,7 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
 
     private func fail(record: DetailPreparationRecord, error: Error) {
         guard self.record(id: record.id) != nil else { return }
+        StoreInstallKeepAlive.shared.end("detail-download-\(record.id)")
         let text = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         InstallLiveActivityBridge.finish(job: liveJob(for: record), success: false, detail: text)
 
