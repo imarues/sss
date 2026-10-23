@@ -44,7 +44,9 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
     private lazy var rescueSession: URLSession = {
         let config = URLSessionConfiguration.default
         config.allowsCellularAccess = true
+        config.timeoutIntervalForRequest = 120
         config.timeoutIntervalForResource = 7 * 24 * 60 * 60
+        config.waitsForConnectivity = true
         return URLSession(configuration: config, delegate: self, delegateQueue: nil)
     }()
 
@@ -275,9 +277,8 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
         }
 
         lock.lock()
-        // One failed download can emit BOTH didFinishDownloadingTo and
-        // didCompleteWithError. An old callback must not cancel an active
-        // data-stream rescue or clear its persisted operation record.
+        // The old background delivery may finish with TWO callbacks. Once a
+        // streaming task owns this job, never let a stale callback abort it.
         if rescueTasks[record.id] != nil {
             lock.unlock()
             return
@@ -290,39 +291,18 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
             fail(record: record, error: error)
             return
         }
-
-        // Xxx's rescue design: URLSessionDataTask streams bytes straight into
-        // an app-owned file, bypassing the reclaimable download-task temp file.
-        guard let raw = record.app.effectiveDownloadURL,
-              let url = URL(string: raw),
-              let scheme = url.scheme?.lowercased(),
-              scheme == "https" || scheme == "http",
-              let destination = try? StoreDownloadStorage.stagedURL(for: sourceJob(for: record)) else {
-            fail(record: record, error: SideloadSigningError.invalidURL)
-            return
-        }
+        publishProgress(0.02, text: "جاري استئناف تحميل IPA", record: record)
         do {
-            let partial = destination.appendingPathExtension("rescue-" + record.id)
-            try fm.createDirectory(at: partial.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? fm.removeItem(at: partial)
-            guard fm.createFile(atPath: partial.path, contents: nil) else {
-                throw StoreDownloadStorageError.cannotStage
-            }
-            let handle = try FileHandle(forWritingTo: partial)
-            let task = rescueSession.dataTask(with: url)
-            lock.lock()
-            rescueTasks[record.id] = task
-            rescueFiles[record.id] = (partial, handle, 0, 0)
-            lock.unlock()
-            publishProgress(0.02, text: "جاري استعادة IPA وحفظه مباشرة", record: record)
-            task.taskDescription = record.id
-            task.resume()
+            try startDownload(record: record)
         } catch {
             fail(record: record, error: error)
         }
     }
 
     private func startDownload(record: DetailPreparationRecord) throws {
+        // Unlike a URLSessionDownloadTask, the bytes from URLSessionDataTask
+        // are immediately written to our own Application Support file. There
+        // is no CFNetwork temp URL to vanish at the download hand-off.
         guard let raw = record.app.effectiveDownloadURL?.trimmingCharacters(in: .whitespacesAndNewlines),
               !raw.isEmpty,
               let url = URL(string: raw),
@@ -330,15 +310,34 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
               scheme == "http" || scheme == "https" else {
             throw SideloadSigningError.invalidURL
         }
-
-        var request = URLRequest(url: url)
-        request.cachePolicy = .reloadIgnoringLocalCacheData
-        request.timeoutInterval = 60
-        request.setValue("application/octet-stream,*/*;q=0.9", forHTTPHeaderField: "Accept")
-
-        let task = session.downloadTask(with: request)
-        task.taskDescription = record.id
-        task.resume()
+        let partial = sourceSnapshotURL(for: record)
+            .appendingPathExtension("downloading")
+        try fm.createDirectory(at: partial.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? fm.removeItem(at: partial)
+        guard fm.createFile(atPath: partial.path, contents: nil) else {
+            throw StoreDownloadStorageError.cannotStage
+        }
+        do {
+            try fm.setAttributes(
+                [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+                ofItemAtPath: partial.path
+            )
+            let handle = try FileHandle(forWritingTo: partial)
+            var request = URLRequest(url: url)
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+            request.timeoutInterval = 120
+            request.setValue("application/octet-stream,*/*;q=0.9", forHTTPHeaderField: "Accept")
+            let task = rescueSession.dataTask(with: request)
+            lock.lock()
+            rescueTasks[record.id] = task
+            rescueFiles[record.id] = (partial, handle, 0, 0)
+            lock.unlock()
+            task.taskDescription = record.id
+            task.resume()
+        } catch {
+            try? fm.removeItem(at: partial)
+            throw error
+        }
     }
 
     private func prepare(record: DetailPreparationRecord, sourceIPA: URL) {
@@ -761,12 +760,16 @@ extension DetailPreparationCenter: URLSessionDownloadDelegate, URLSessionDataDel
         }
         if let error {
             try? fm.removeItem(at: entry.0)
-            fail(record: current, error: error)
+            if case SideloadSigningError.httpStatus = error {
+                fail(record: current, error: error)
+            } else {
+                retrySourceDownload(record: current, error: error)
+            }
             return
         }
         if entry.3 > 0 && entry.2 < entry.3 {
             try? fm.removeItem(at: entry.0)
-            fail(record: current, error: StoreDownloadStorageError.truncatedFile)
+            retrySourceDownload(record: current, error: StoreDownloadStorageError.truncatedFile)
             return
         }
         do {
@@ -776,7 +779,7 @@ extension DetailPreparationCenter: URLSessionDownloadDelegate, URLSessionDataDel
             prepare(record: current, sourceIPA: staged)
         } catch {
             try? fm.removeItem(at: entry.0)
-            fail(record: current, error: error)
+            retrySourceDownload(record: current, error: error)
         }
     }
 
