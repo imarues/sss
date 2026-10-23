@@ -90,11 +90,11 @@ enum StoreDownloadStorage {
         if isValidIPA(at: destination), sizeIsPlausible(url: destination, expectedBytes: job.expectedBytes) {
             return destination
         }
-        if fm.fileExists(atPath: destination.path) {
-            try? fm.removeItem(at: destination)
-        }
-
+        // Keep the last valid staged IPA until the replacement is verified.
         guard fm.fileExists(atPath: temporaryURL.path) else {
+            if isValidIPA(at: destination), sizeIsPlausible(url: destination, expectedBytes: job.expectedBytes) {
+                return destination
+            }
             throw StoreDownloadStorageError.sourceMissing
         }
 
@@ -105,35 +105,20 @@ enum StoreDownloadStorage {
         try? fm.removeItem(at: incoming)
         defer { try? fm.removeItem(at: incoming) }
 
-        var staged = false
+        // Copy while still inside the URLSession callback. Moving/linking
+        // the system-owned temp file risks invalidating the handoff.
         do {
-            try fm.moveItem(at: temporaryURL, to: incoming)
-            staged = true
-        } catch {}
-
-        if !staged {
-            do {
-                try fm.linkItem(at: temporaryURL, to: incoming)
-                staged = true
-            } catch {}
-        }
-
-        if !staged {
-            do {
-                try fm.copyItem(at: temporaryURL, to: incoming)
-                staged = true
-            } catch {
-                if isValidIPA(at: destination), sizeIsPlausible(url: destination, expectedBytes: job.expectedBytes) {
-                    return destination
-                }
-                if !fm.fileExists(atPath: temporaryURL.path) {
-                    throw StoreDownloadStorageError.sourceMissing
-                }
-                throw StoreDownloadStorageError.cannotStage
+            try fm.copyItem(at: temporaryURL, to: incoming)
+        } catch {
+            if isValidIPA(at: destination), sizeIsPlausible(url: destination, expectedBytes: job.expectedBytes) {
+                return destination
             }
+            if !fm.fileExists(atPath: temporaryURL.path) {
+                throw StoreDownloadStorageError.sourceMissing
+            }
+            throw StoreDownloadStorageError.cannotStage
         }
 
-        guard staged else { throw StoreDownloadStorageError.cannotStage }
         try validateIPA(at: incoming)
         guard sizeIsPlausible(url: incoming, expectedBytes: job.expectedBytes) else {
             throw StoreDownloadStorageError.truncatedFile
