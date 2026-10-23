@@ -215,7 +215,7 @@ private struct IPAGlowAppCard: View {
     }
 
     private var sizeText: String {
-        guard let bytes = app.fileSize, bytes > 0 else { return "الحجم غير متوفر" }
+        guard let bytes = app.fileSize, bytes > 0 else { return StoreLanguage.localized("الحجم غير متوفر") }
         return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 
@@ -250,7 +250,7 @@ private struct IPAGlowAppCard: View {
                     Text(app.name)
                         .font(AppFont.bold(15)).foregroundStyle(.white)
                         .lineLimit(1)
-                    Text(app.categories?.first ?? (app.isDylibAsset ? "دايلب" : "تطبيق"))
+                    Text(StoreLanguage.localized(app.categories?.first ?? (app.isDylibAsset ? "دايلب" : "تطبيق")))
                         .font(AppFont.medium(11)).foregroundStyle(.white.opacity(0.64))
                         .lineLimit(1)
                     if !app.isDylibAsset {
@@ -266,7 +266,7 @@ private struct IPAGlowAppCard: View {
                     if showsDate {
                         let date = app.updatedAt ?? app.versionUpdatedAt ?? app.addedAt
                         if let date, !date.isEmpty {
-                            Text("تاريخ التحديث: " + date)
+                            Text(StoreLanguage.localized("تاريخ التحديث: ") + date)
                                 .font(AppFont.medium(10)).foregroundStyle(.white.opacity(0.53))
                                 .lineLimit(1)
                         }
