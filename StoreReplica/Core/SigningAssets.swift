@@ -66,7 +66,7 @@ enum SigningAssetProvider {
             throw SigningAssetError.invalidProvision
         }
         let cert = SecCertificateCreateWithData(nil, certData as CFData)
-        let subject = cert.flatMap { SecCertificateCopySubjectSummary($0) as String? }
+        let subject = cert.flatMap { SecCertificateCopySubjectSummary($0) }.map { String(describing: $0) }
         let name = (subject?.isEmpty == false ? subject : nil)
             ?? (profile["Name"] as? String)
             ?? "Certificate"
@@ -76,6 +76,17 @@ enum SigningAssetProvider {
             expiration: expires,
             provisionedUDIDs: profile["ProvisionedDevices"] as? [String] ?? []
         )
+    }
+
+    static func clearActiveCertificate() {
+        if let storedP12 { try? FileManager.default.removeItem(at: storedP12) }
+        if let storedProvision { try? FileManager.default.removeItem(at: storedProvision) }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: keychainAccount
+        ]
+        SecItemDelete(query as CFDictionary)
     }
 
     /// Switch the certificate used by the existing signing engine.
