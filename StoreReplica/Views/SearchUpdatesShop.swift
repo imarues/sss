@@ -366,6 +366,9 @@ struct ProductCard: View {
 struct StoreSettingsView: View {
     @EnvironmentObject private var store: StoreViewModel
     @Environment(\.dismiss) private var dismiss
+    @AppStorage("store.favoriteIDs") private var favoriteIDs = ""
+    @AppStorage("store.language") private var selectedLanguage = "ar"
+    @State private var favoriteApps: [StoreApp] = []
     var body: some View {
         ZStack {
             StoreTheme.background.ignoresSafeArea()
@@ -379,12 +382,20 @@ struct StoreSettingsView: View {
                         Text("الحساب").font(AppFont.black(20)).foregroundStyle(StoreTheme.textPrimary)
                     }
                     ticket
+                    favoritesSection
                     VStack(spacing: 0) {
                         settingRow("عدد التطبيقات", "\((store.catalog.total ?? store.searchMeta.totalApps ?? 0).formatted())", "square.stack.3d.up.fill")
                         Divider().overlay(StoreTheme.surfaceBorder)
                         settingRow("نمط التصميم", "Night", "moon.stars.fill")
                         Divider().overlay(StoreTheme.surfaceBorder)
-                        settingRow("لغة المتجر", "العربية", "globe")
+                        HStack {
+                            Picker("اللغة / Language", selection: $selectedLanguage) {
+                                Text("العربية").tag("ar")
+                                Text("English").tag("en")
+                            }.pickerStyle(.menu)
+                            Spacer()
+                            Image(systemName: "globe").foregroundStyle(StoreTheme.accent)
+                        }.frame(height: 48)
                     }
                     .padding(.horizontal, 14)
                     .storeCard()
@@ -400,6 +411,36 @@ struct StoreSettingsView: View {
                 .padding(16)
             }
         }
+        .task { favoriteApps = (try? await KiraSourceSearchService.shared.catalog()) ?? [] }
+    }
+
+    private var favoritesSection: some View {
+        let ids = favoriteIDs.split(separator: "\\n").map(String.init)
+        let favorites = ids.compactMap { id in favoriteApps.first { $0.id == id && !$0.isDylibAsset } }
+        return VStack(alignment: .trailing, spacing: 12) {
+            HStack {
+                Text("\\(favorites.count)/25").font(AppFont.medium(12)).foregroundStyle(StoreTheme.textSecondary)
+                Spacer()
+                Text("المفضلة").font(AppFont.bold(18)).foregroundStyle(StoreTheme.textPrimary)
+                Image(systemName: "heart.fill").foregroundStyle(.red)
+            }
+            if favorites.isEmpty {
+                Text("اضغط القلب على أي تطبيق أو لعبة لإضافتها هنا")
+                    .font(AppFont.medium(12)).foregroundStyle(StoreTheme.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            } else {
+                LazyVStack(spacing: 8) {
+                    ForEach(favorites) { app in
+                        HStack(spacing: 8) {
+                            StoreFavoriteButton(app: app)
+                            AppIconView(app: app, size: 44)
+                            Text(app.name).font(AppFont.bold(13)).foregroundStyle(StoreTheme.textPrimary)
+                                .frame(maxWidth: .infinity, alignment: .trailing)
+                        }.padding(10).background(StoreTheme.surface, in: RoundedRectangle(cornerRadius: 15))
+                    }
+                }
+            }
+        }.padding(16).storeCard()
     }
 
     private var ticket: some View {
