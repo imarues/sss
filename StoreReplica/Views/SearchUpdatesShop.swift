@@ -299,43 +299,11 @@ struct UpdatesView: View {
     }
 }
 
+// Keep the existing tab's type; its content now comes exclusively from
+// https://ipastore.pages.dev/gift.json, not the legacy cards endpoint.
 struct ShopView: View {
-    @EnvironmentObject private var store: StoreViewModel
-    private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
     var body: some View {
-        ScrollView(showsIndicators: false) {
-            VStack(spacing: 20) {
-                StoreHeader()
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text("المتجر").font(AppFont.black(28)).foregroundStyle(StoreTheme.textPrimary)
-                    Text("اشتراكات ومنتجات رقمية").font(AppFont.regular(12)).foregroundStyle(StoreTheme.textSecondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .trailing)
-                .padding(.horizontal, StoreTheme.pageHorizontal)
-                if (store.cards.products ?? []).isEmpty {
-                    emptyShop
-                } else {
-                    LazyVGrid(columns: columns, spacing: 12) {
-                        ForEach(store.cards.products ?? []) { ProductCard(product: $0) }
-                    }
-                    .padding(.horizontal, StoreTheme.pageHorizontal)
-                }
-            }
-            .padding(.bottom, 24)
-        }
-        .background(StoreTheme.background)
-    }
-
-    private var emptyShop: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "bag.fill").font(.system(size: 38)).foregroundStyle(StoreTheme.accent)
-            Text("جاري تحميل المنتجات").font(AppFont.bold(14)).foregroundStyle(StoreTheme.textPrimary)
-            Text("سيتم عرض منتجات المتجر هنا عند توفر الاتصال.").font(AppFont.regular(11.5)).foregroundStyle(StoreTheme.textSecondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(28)
-        .storeCard()
-        .padding(.horizontal, StoreTheme.pageHorizontal)
+        GiftStoreView()
     }
 }
 
