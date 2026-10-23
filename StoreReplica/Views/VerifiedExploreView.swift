@@ -127,14 +127,14 @@ private final class VerifiedExploreModel: ObservableObject {
 
         // These requests are independent. One source failing cannot replace
         // the previously checked category set with fabricated app counts.
-        async let source = KiraSourceSearchService.shared.homeCollections(force: force)
+        async let source = KiraSourceSearchService.shared.exploreApps(force: force)
         async let verified = VerifiedExploreCache.loadIndex(force: force)
 
         let newApps = try? await source
         let newIndex = try? await verified
 
-        if let newApps, !newApps.apps.isEmpty {
-            publishedApps = newApps.apps.filter { !$0.isDylibAsset }
+        if let newApps, !newApps.isEmpty {
+            publishedApps = newApps.filter { !$0.isDylibAsset }
             VerifiedExploreCache.storeApps(publishedApps)
         }
         if let newIndex {
