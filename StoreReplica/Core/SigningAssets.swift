@@ -51,6 +51,29 @@ enum SigningAssetProvider {
         let provisionedUDIDs: [String]
     }
 
+    struct InspectedCertificate {
+        let p12Data: Data
+        let provisionData: Data
+        let details: CertificateDetails
+    }
+
+    /// Inspect imported documents without changing the active signing identity.
+    /// The same validation is used by the certificate manager and signing setup.
+    static func inspectCertificate(p12URL: URL, profileURL: URL, password: String) throws -> InspectedCertificate {
+        guard p12URL.pathExtension.lowercased() == "p12" else {
+            throw SigningAssetError.wrongP12Extension
+        }
+        guard profileURL.pathExtension.lowercased() == "mobileprovision" else {
+            throw SigningAssetError.wrongProvisionExtension
+        }
+        let p12Data = try readSecurityScopedData(from: p12URL)
+        let provisionData = try readSecurityScopedData(from: profileURL)
+        guard !p12Data.isEmpty else { throw SigningAssetError.emptyFile(p12URL.lastPathComponent) }
+        guard !provisionData.isEmpty else { throw SigningAssetError.emptyFile(profileURL.lastPathComponent) }
+        let details = try details(p12Data: p12Data, provisionData: provisionData, password: password)
+        return InspectedCertificate(p12Data: p12Data, provisionData: provisionData, details: details)
+    }
+
     static func details(credentials: Credentials) throws -> CertificateDetails {
         let p12Data = try Data(contentsOf: credentials.p12)
         let provisionData = try Data(contentsOf: credentials.mobileProvision)
@@ -180,38 +203,10 @@ enum SigningAssetProvider {
     /// BatSign-style import: read both picker URLs while access is valid,
     /// validate the pair and password first, then persist our own copies.
     static func importCertificate(p12URL: URL, profileURL: URL, password: String) throws {
-        guard p12URL.pathExtension.lowercased() == "p12" else {
-            throw SigningAssetError.wrongP12Extension
-        }
-        guard profileURL.pathExtension.lowercased() == "mobileprovision" else {
-            throw SigningAssetError.wrongProvisionExtension
-        }
-
-        let p12Data = try readSecurityScopedData(from: p12URL)
-        let provisionData = try readSecurityScopedData(from: profileURL)
-        guard !p12Data.isEmpty else { throw SigningAssetError.emptyFile(p12URL.lastPathComponent) }
-        guard !provisionData.isEmpty else { throw SigningAssetError.emptyFile(profileURL.lastPathComponent) }
-
-        let provision = try provisionDictionary(data: provisionData)
-        let identityCertificate = try identityCertificateData(
-            p12Data: p12Data, password: password,
-            expectedCertificates: provision["DeveloperCertificates"] as? [Data]
+        let inspected = try inspectCertificate(p12URL: p12URL, profileURL: profileURL, password: password)
+        try activateArchive(
+            p12Data: inspected.p12Data, provisionData: inspected.provisionData, password: password
         )
-        try validate(identityCertificate: identityCertificate, provision: provision)
-
-        guard let p12Target = storedP12, let provisionTarget = storedProvision else {
-            throw StoreInstallError.missingSigningAssets
-        }
-
-        try p12Data.write(to: p12Target, options: [.atomic])
-        do {
-            try provisionData.write(to: provisionTarget, options: [.atomic])
-            try savePassword(password)
-        } catch {
-            try? FileManager.default.removeItem(at: p12Target)
-            try? FileManager.default.removeItem(at: provisionTarget)
-            throw error
-        }
     }
 
     static func importP12(from source: URL) throws {
