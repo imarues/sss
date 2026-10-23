@@ -36,7 +36,7 @@ private struct VerifiedExploreSection: Identifiable {
 }
 
 private enum VerifiedExploreCache {
-    static let feed = URL(string: "https://ipastore.pages.dev/explore-index.json")!
+    static let feed = URL(string: "https://raw.githubusercontent.com/imarues/sss/main/explore-index.json")!
     static let source = "https://ikiraplus.pages.dev/IPA-AR.json"
 
     private static func file(_ name: String) -> URL {
