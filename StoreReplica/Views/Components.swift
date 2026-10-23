@@ -356,6 +356,7 @@ struct ShowcaseCard: View {
                 Text(app.name.storeForcedRTL).font(AppFont.bold(15)).foregroundStyle(StoreTheme.textPrimary).lineLimit(1)
                 Text("الإصدار \(app.version ?? "—")".storeForcedRTL).font(AppFont.regular(11)).foregroundStyle(StoreTheme.textSecondary)
             }
+            if !app.isDylibAsset { StoreFavoriteButton(app: app) }
             InstallPill(app: app)
         }
         .environment(\.layoutDirection, .rightToLeft)
@@ -419,5 +420,34 @@ struct CategoryGridTile: View {
         }
         .environment(\.layoutDirection, .rightToLeft)
         .padding(14).frame(height: 132).storeCard(radius: 20)
+    }
+}
+
+// Favorites are device-local; no account or server is required.
+struct StoreFavoriteButton: View {
+    let app: StoreApp
+    @AppStorage("store.favoriteIDs") private var favoriteIDs = ""
+
+    private var ids: [String] { favoriteIDs.split(separator: "\n").map(String.init) }
+    private var isFavorite: Bool { ids.contains(app.id) }
+
+    var body: some View {
+        Button {
+            var current = ids
+            if isFavorite {
+                current.removeAll { $0 == app.id }
+            } else if current.count < 25 {
+                current.append(app.id)
+            }
+            favoriteIDs = current.joined(separator: "\n")
+        } label: {
+            Image(systemName: isFavorite ? "heart.fill" : "heart")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(isFavorite ? Color.red : StoreTheme.textSecondary)
+                .frame(width: 36, height: 36)
+                .background(StoreTheme.surface, in: Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(isFavorite ? "إزالة من المفضلة" : "إضافة إلى المفضلة")
     }
 }
