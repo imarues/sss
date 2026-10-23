@@ -304,7 +304,7 @@ struct SigningHubView: View {
             .navigationBarTitleDisplayMode(.inline)
         }
         .preferredColorScheme(.dark)
-        .environment(\.layoutDirection, .rightToLeft)
+        .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
         .interactiveDismissDisabled(model.busy)
         .sheet(isPresented: $pickingIPA) {
             SigningFilePicker(allowedContentTypes: [.data]) { urls in
@@ -365,7 +365,7 @@ struct SigningHubView: View {
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .fill(model.selectedTab == tab ? StoreTheme.accent : Color.clear)
 
-                        Text(tab.rawValue)
+                        Text(StoreLanguage.localized(tab.rawValue))
                             .font(AppFont.bold(12))
                             .foregroundStyle(model.selectedTab == tab ? StoreTheme.onAccent : StoreTheme.textSecondary)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -656,7 +656,7 @@ struct SigningHubView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
-            .environment(\.layoutDirection, .rightToLeft)
+            .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
         }
         .padding(14)
         .background(StoreTheme.surface)
