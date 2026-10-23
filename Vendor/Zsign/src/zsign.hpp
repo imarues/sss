@@ -20,6 +20,9 @@ bool InjectDyLib(NSString *filePath, NSString *dylibPath, bool weakInject);
 bool UninstallDylibs(NSString *filePath, NSArray<NSString *> *dylibPathsArray);
 NSArray<NSString *> *ListDylibs(NSString *filePath);
 bool ChangeDylibPath(NSString *filePath, NSString *oldPath, NSString *newPath);
+// OpenSSL-backed PKCS#12 identity extraction for formats unsupported by Security.framework.
+// Returns DER only when a certificate and matching private key are present.
+NSData *ZsignExtractP12Certificate(NSData *p12Data, NSString *password);
 
 int zsign(
 	NSString *app,
