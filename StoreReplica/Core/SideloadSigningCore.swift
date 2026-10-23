@@ -716,12 +716,14 @@ final class SideloadURLDownloader: NSObject, URLSessionDownloadDelegate, URLSess
         totalBytesWritten: Int64,
         totalBytesExpectedToWrite: Int64
     ) {
+        guard downloadTask.taskIdentifier == activeDownloadTask?.taskIdentifier else { return }
         let expected = max(totalBytesExpectedToWrite, 0)
         let fraction = expected > 0 ? min(1, Double(totalBytesWritten) / Double(expected)) : 0
         progressHandler?(fraction, totalBytesWritten, expected)
     }
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+        guard downloadTask.taskIdentifier == activeDownloadTask?.taskIdentifier else { return }
         if let http = downloadTask.response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
             responseError = SideloadSigningError.httpStatus(http.statusCode)
             return
