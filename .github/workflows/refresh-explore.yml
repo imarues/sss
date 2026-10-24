@@ -67,7 +67,7 @@ jobs:
           idx=json.load(open("explore-index.json"))
           assert isinstance(source.get("apps"), list)
           assert idx["schema"]==1 and idx["source"]=="https://ikiraplus.pages.dev/IPA-AR.json"
-          assert len(idx["categories"])==10
+          assert len(idx["categories"])==16
           assert all(c["count"]==len(c["appIDs"]) for c in idx["categories"])
           assert idx["checkedCount"] <= idx["eligibleCount"]
           assert idx["verifiedCount"] <= idx["checkedCount"]
