@@ -231,13 +231,20 @@ def memberships(match):
     paid = isinstance(price, (int, float)) and not isinstance(price, bool) and price > 0
     if paid:
         return ["paid-games" if is_game else "paid-apps"]
-    # Prefer Apple's primary genre. Secondary genres only help when primary
-    # is unavailable or does not map to any of our categories.
-    for genre_set in ([primary] if primary else [], sorted(genres)):
-        for genre in genre_set:
+    # Historical cached matches may lack primaryGenreId. Never let a broad
+    # Entertainment secondary genre swallow a game with a real game subgenre.
+    if is_game:
+        game_categories = ("action", "sports", "racing", "puzzle", "adventure", "strategy")
+        for genre in ([primary] if primary else []) + sorted(genres):
             for cat in CATEGORIES:
-                if cat["type"] == "genre" and genre in cat["appleGenreIds"]:
+                if cat["id"] in game_categories and genre in cat["appleGenreIds"]:
                     return [cat["id"]]
+        return []  # Do not mislabel generic games as Entertainment.
+    # Prefer primary category, then a deterministic secondary fallback.
+    for genre in ([primary] if primary else []) + sorted(genres):
+        for cat in CATEGORIES:
+            if cat["type"] == "genre" and genre in cat["appleGenreIds"]:
+                return [cat["id"]]
     return []
 
 def normalize_entries(root):
@@ -361,6 +368,9 @@ def self_test():
     assert memberships({"genreIds": ["6005", "6007"], "primaryGenreId": "6007", "price": 0}) == ["productivity"]
     assert memberships({"genreIds": ["6007"], "primaryGenreId": "6007", "price": 2}) == ["paid-apps"]
     assert memberships({"genreIds": ["6014", "7001"], "primaryGenreId": "7001", "price": 0}) == ["action"]
+    assert memberships({"genreIds": ["6014", "6016", "7001"], "price": 0}) == ["action"]
+    assert memberships({"genreIds": ["6014", "6016"], "price": 0}) == []
+    assert memberships({"genreIds": ["6016"], "price": 0}) == ["entertainment"]
     assert value["checkedCount"] == 2
     assert value["sourceCount"] == 3
     cached = build(sample, value, 5, lambda _: 1 / 0, min_delay=0)
