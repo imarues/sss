@@ -279,7 +279,10 @@ struct DownloadsCenterView: View {
 
     private func libraryRow(_ item: SideloadLibraryItem) -> some View {
         HStack(spacing: 11) {
-            localIcon(url: item.iconURL, size: 58)
+            SideloadLibraryIcon(
+                item: item,
+                trackedApp: transfers.trackedApp(id: item.appID)
+            )
 
             VStack(alignment: .trailing, spacing: 5) {
                 Text(item.name)

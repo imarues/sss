@@ -331,6 +331,39 @@ struct AppIconView: View {
     }
 }
 
+/// Prefer IPA-extracted artwork, then the saved IPA-AR source icon.
+/// Works for older downloads without a sideload-meta.json icon sidecar.
+struct SideloadLibraryIcon: View {
+    let item: SideloadLibraryItem
+    let trackedApp: StoreApp?
+    var size: CGFloat = 58
+
+    var body: some View {
+        Group {
+            if let url = item.iconURL,
+               let image = UIImage(contentsOfFile: url.path) {
+                Image(uiImage: image).resizable().scaledToFill()
+            } else if let app = trackedApp,
+                      let remote = app.iconUrl, !remote.isEmpty {
+                RemoteImage(path: remote, cornerRadius: size * 0.22)
+            } else {
+                ZStack {
+                    StoreTheme.field
+                    Image(systemName: "app.fill")
+                        .font(.system(size: size * 0.34, weight: .semibold))
+                        .foregroundStyle(StoreTheme.accent)
+                }
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
+                .stroke(.white.opacity(0.12), lineWidth: 0.8)
+        }
+    }
+}
+
 struct BandCard: View {
     let app: StoreApp
     var body: some View {

@@ -19,6 +19,8 @@ final class BatSignLoopbackIPAInstallServer {
     private var deliveredRanges: [(Int64, Int64)] = []
 
     private var onTransferStarted: (() -> Void)?
+    private var onTransferActivity: (() -> Void)?
+    private var lastTransferActivityAt = Date.distantPast
     private var onTransferComplete: (() -> Void)?
     private var onFailure: ((Error) -> Void)?
 
@@ -58,6 +60,7 @@ final class BatSignLoopbackIPAInstallServer {
     func start(
         onReady: @escaping () -> Void,
         onTransferStarted: @escaping () -> Void,
+        onTransferActivity: @escaping () -> Void,
         onTransferComplete: @escaping () -> Void,
         onFailure: @escaping (Error) -> Void
     ) {
@@ -71,6 +74,7 @@ final class BatSignLoopbackIPAInstallServer {
         }
 
         self.onTransferStarted = onTransferStarted
+        self.onTransferActivity = onTransferActivity
         self.onTransferComplete = onTransferComplete
         self.onFailure = onFailure
         StoreInstallKeepAlive.shared.begin(keepAliveReason)
@@ -99,6 +103,7 @@ final class BatSignLoopbackIPAInstallServer {
         listener = nil
         onFailure = nil
         onTransferStarted = nil
+        onTransferActivity = nil
         onTransferComplete = nil
         deliveredRanges.removeAll()
         fileURL = nil
@@ -244,11 +249,19 @@ final class BatSignLoopbackIPAInstallServer {
                     try? handle.close()
                     connection.cancel()
                 } else {
+                    self.reportTransferActivity()
                     pump()
                 }
             })
         }
         pump()
+    }
+
+    private func reportTransferActivity() {
+        let now = Date()
+        guard now.timeIntervalSince(lastTransferActivityAt) >= 8 else { return }
+        lastTransferActivityAt = now
+        DispatchQueue.main.async { [weak self] in self?.onTransferActivity?() }
     }
 
     private func recordDeliveredRange(start: Int64, end: Int64, totalSize: Int64) {

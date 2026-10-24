@@ -555,7 +555,7 @@ enum SideloadLibraryStore {
     private static let recordName = "sideload-meta.json"
     private static let iconName = "sideload-icon.png"
 
-    fileprivate static func writeRecord(
+    static func writeRecord(
         appID: String,
         folder: URL,
         metadata: SideloadIPAMetadata,

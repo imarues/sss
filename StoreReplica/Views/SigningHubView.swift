@@ -955,7 +955,10 @@ struct SigningHubView: View {
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
 
-            localIcon(data: nil, url: item.iconURL, size: 58)
+            SideloadLibraryIcon(
+                item: item,
+                trackedApp: transfers.trackedApp(id: item.appID)
+            )
         }
         .padding(13)
         .background(StoreTheme.surface)

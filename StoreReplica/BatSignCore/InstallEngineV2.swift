@@ -98,12 +98,15 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
     private var installTransferStarted = false
 
     // UIApplication.open only tells us whether the system accepted the ask.
-    // BatSign retries only refused asks; accepted asks are never duplicated.
+    // A refused hand-off is left Ready for manual retry; accepted asks are never duplicated.
     private var pendingHandOffURL: URL?
     private var handOffAccepted = false
     private var handOffAttempts = 0
     private var handOffRetry: DispatchWorkItem?
     private var handOffStallTimeout: DispatchWorkItem?
+    // A transfer can be canceled after it starts; reset this watchdog only
+    // while the loopback server continues sending data.
+    private var transferStallTimeout: DispatchWorkItem?
 
     private var bootstrapped = false
 
@@ -221,27 +224,11 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
     func applicationDidBecomeActive() {
         StoreInstallKeepAlive.shared.reaffirm()
 
-        // UIApplication.open reports success when iOS presents its confirmation
-        // sheet, not when the user actually accepts installation. If the app
-        // becomes active again and the loopback server has not seen the IPA
-        // transfer begin, the confirmation was dismissed/cancelled. Return the
-        // item to Ready instead of leaving the UI spinning at 100%.
-        if handOffAccepted,
-           let job = pendingInstallJob,
-           !installTransferStarted {
-            let jobID = job.id
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
-                guard let self,
-                      self.pendingInstallJob?.id == jobID,
-                      self.handOffAccepted,
-                      !self.installTransferStarted else { return }
-                self.finishInstallAttemptAsReady(
-                    job,
-                    message: "تم إلغاء تأكيد التثبيت. الملف محفوظ وجاهز لإعادة المحاولة."
-                )
-            }
-            return
-        }
+        // iOS never reports whether the user pressed Install or Cancel in
+        // its system sheet. The row is already Ready when the sheet opens.
+        // Keep the server available for an eventual real IPA GET request:
+        // foregrounding alone is not evidence that installation was denied.
+        if handOffAccepted { return }
 
         // If iOS explicitly refused an earlier background ask, foregrounding is
         // a free moment to offer it again. Never repeat an accepted request.
@@ -434,9 +421,9 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
                 self.publish(
                     appID: job.appID,
                     state: StoreInstallState(
-                        phase: .installing,
-                        progress: 0.99,
-                        message: "جاري فتح مثبت iOS"
+                        phase: .ready,
+                        progress: 1,
+                        message: "IPA موقّع ومحفوظ · جاري فتح تأكيد iOS"
                     )
                 )
                 InstallLiveActivityBridge.update(
@@ -535,6 +522,7 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
                     self.handOffRetry = nil
                     self.handOffStallTimeout?.cancel()
                     self.handOffStallTimeout = nil
+                    self.scheduleTransferStallSafety(job: job)
                     self.publish(
                         appID: job.appID,
                         state: StoreInstallState(
@@ -543,6 +531,11 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
                             message: "جاري إرسال التطبيق إلى iOS"
                         )
                     )
+                },
+                onTransferActivity: { [weak self] in
+                    guard let self, self.pendingInstallJob?.id == job.id,
+                          self.installTransferStarted else { return }
+                    self.scheduleTransferStallSafety(job: job)
                 },
                 onTransferComplete: { [weak self] in
                     guard let self, self.pendingInstallJob?.id == job.id else { return }
@@ -594,60 +587,43 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
             self.handOffAccepted = accepted
 
             if accepted {
-                self.publish(
-                    appID: job.appID,
-                    state: StoreInstallState(
-                        phase: .installing,
-                        progress: 1,
-                        message: "بانتظار تأكيد iOS"
+                // UIApplication.open means iOS showed/accepted the system
+                // hand-off request, NOT that the user approved installation.
+                // Display Ready immediately. Never spin for up to 180 seconds
+                // after the user chooses Cancel in the iOS prompt.
+                if !self.installTransferStarted {
+                    self.publishReady(
+                        job: job,
+                        message: "IPA محفوظ وجاهز · يمكنك تأكيد أو إلغاء التثبيت من iOS"
                     )
-                )
+                    InstallLiveActivityBridge.finish(
+                        job: job,
+                        success: true,
+                        detail: "IPA جاهز · تم عرض طلب التثبيت"
+                    )
+                }
 
-                // Files export is deliberately delayed until after the system
-                // has taken the prompt request, so it cannot steal disk I/O
-                // from signing/packaging/handoff.
                 if let original = self.pendingOriginalIPA {
                     self.exportQueue.asyncAfter(deadline: .now() + 6) {
                         _ = StoreDownloadStorage.exportToFiles(stagedURL: original, job: job)
                     }
                 }
 
-                // Cancellation of Apple's confirmation is not reported to us.
-                // Keep the server standing for a generous window, then return
-                // the row to Ready rather than spin forever.
+                // Do not stop the server yet. If the user actually confirms,
+                // iOS will request /app.ipa and onTransferStarted will track it.
                 self.scheduleAcceptedHandOffSafety(job: job)
                 return
             }
 
-            self.scheduleRefusedHandOffRetry(url: url, job: job)
+            // An explicitly refused system URL request isn't a reason to
+            // retry the iOS popup repeatedly. Keep the signed/staged IPA.
+            if !self.installTransferStarted {
+                self.finishInstallAttemptAsReady(
+                    job,
+                    message: "لم يُفتح تأكيد التثبيت. IPA محفوظ وجاهز لإعادة المحاولة."
+                )
+            }
         }
-    }
-
-    private func scheduleRefusedHandOffRetry(url: URL, job: StoreInstallJob) {
-        guard pendingInstallJob?.id == job.id, !handOffAccepted, !installTransferStarted else { return }
-
-        // BatSign retries a refused hand-off, but never one the system already
-        // accepted. Front-load the first retries so the official confirmation
-        // normally arrives within a few seconds.
-        let delays: [TimeInterval] = [0.8, 1.2, 2.0, 3.0, 5.0, 8.0]
-        let index = max(0, handOffAttempts - 1)
-        guard index < delays.count else {
-            finishInstallAttemptAsReady(
-                job,
-                message: "iOS لم يقبل طلب التثبيت. الملف محفوظ وجاهز لإعادة المحاولة."
-            )
-            return
-        }
-
-        let work = DispatchWorkItem { [weak self] in
-            guard let self,
-                  self.pendingInstallJob?.id == job.id,
-                  !self.handOffAccepted,
-                  !self.installTransferStarted else { return }
-            self.offerInstallURL(url, job: job)
-        }
-        handOffRetry = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + delays[index], execute: work)
     }
 
     private func scheduleAcceptedHandOffSafety(job: StoreInstallJob) {
@@ -663,6 +639,23 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
         }
         handOffStallTimeout = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 180, execute: work)
+    }
+
+    private func scheduleTransferStallSafety(job: StoreInstallJob) {
+        transferStallTimeout?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self,
+                  self.pendingInstallJob?.id == job.id,
+                  self.installTransferStarted else { return }
+            self.finishInstallAttemptAsReady(
+                job,
+                message: "توقف نقل IPA إلى iOS. الملف محفوظ وجاهز لإعادة المحاولة."
+            )
+        }
+        transferStallTimeout = work
+        // This timer is reset as long as iOS keeps receiving bytes, so large
+        // valid installations are not cut off by a fixed overall timeout.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 95, execute: work)
     }
 
     private func retryCorruptPackageIfNeeded(job: StoreInstallJob, stagedIPA: URL, error: Error) {
@@ -726,6 +719,8 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
         handOffRetry = nil
         handOffStallTimeout?.cancel()
         handOffStallTimeout = nil
+        transferStallTimeout?.cancel()
+        transferStallTimeout = nil
         installerServer?.stop()
         installerServer = nil
         installerServerReady = false

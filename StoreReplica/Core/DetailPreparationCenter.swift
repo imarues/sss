@@ -405,7 +405,11 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
                     self.progress = 1
                     self.statusText = "جاهز للتوقيع والتثبيت"
                     self.busy = false
-                    TransferActivityCenter.shared.track(preparedApp)
+                    var displayedApp = preparedApp
+                    if displayedApp.iconUrl?.isEmpty != false {
+                        displayedApp.iconUrl = record.app.iconUrl
+                    }
+                    TransferActivityCenter.shared.track(displayedApp)
 
                     NotificationCenter.default.post(
                         name: Self.completedNotification,
@@ -420,14 +424,14 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
                     // SideloadPackagePreparer, so StoreInstallCoordinator signs it
                     // immediately without downloading the original IPA again.
                     if SigningAssetProvider.hasCredentials {
-                        StoreInstallCoordinator.shared.start(preparedApp)
+                        StoreInstallCoordinator.shared.start(displayedApp)
                     } else {
                         InstallLiveActivityBridge.finish(
                             job: self.liveJob(for: record),
                             success: true,
                             detail: "جاهز للتوقيع"
                         )
-                        SigningSetupCoordinator.shared.request(for: preparedApp)
+                        SigningSetupCoordinator.shared.request(for: displayedApp)
                     }
                     self.finishBackgroundEventsIfPossible()
                 }
@@ -896,6 +900,25 @@ enum AppCloneEngine {
         try? fm.removeItem(at: destination)
         try fm.copyItem(at: output, to: destination)
         try StoreDownloadStorage.validateIPA(at: destination)
+
+        let cloneMetadata = SideloadIPAMetadata(
+            name: newName,
+            bundleID: newBundle,
+            version: metadata.version,
+            size: size,
+            iconData: metadata.iconData
+        )
+        // A missing icon must never prevent an otherwise valid clone from
+        // being signed. Existing downloads also have remote artwork fallback.
+        try? SideloadLibraryStore.writeRecord(
+            appID: clone.id,
+            folder: destination.deletingLastPathComponent(),
+            metadata: cloneMetadata,
+            source: .updates,
+            sourceURL: app.effectiveDownloadURL,
+            copyNumber: number,
+            dylibNames: []
+        )
         progress(1, "جاهز للتوقيع والتثبيت")
         return clone
     }
