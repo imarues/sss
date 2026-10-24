@@ -49,10 +49,10 @@ CATEGORIES = [
      "appleGenreIds": ["7013"], "type": "genre", "glow": "#F3B35A"},
     {"id": "puzzle", "nameAr": "ألغاز", "nameEn": "Puzzle", "symbol": "puzzlepiece.fill",
      "appleGenreIds": ["7012"], "type": "genre", "glow": "#B083F6"},
-    {"id": "design", "nameAr": "تصاميم", "nameEn": "Graphics & Design", "symbol": "paintpalette.fill",
-     "appleGenreIds": ["6027"], "type": "genre", "glow": "#C179E8"},
+    {"id": "simulation", "nameAr": "ألعاب المحاكاة", "nameEn": "Simulation Games", "symbol": "gamecontroller.fill",
+     "appleGenreIds": ["7015"], "type": "genre", "glow": "#C179E8"},
     {"id": "photo-video", "nameAr": "صور وفيديو", "nameEn": "Photo & Video", "symbol": "camera.fill",
-     "appleGenreIds": ["6008"], "type": "genre", "glow": "#F278B4"},
+     "appleGenreIds": ["6008", "6027"], "type": "genre", "glow": "#F278B4"},
     {"id": "productivity", "nameAr": "إنتاجية", "nameEn": "Productivity", "symbol": "checkmark.square.fill",
      "appleGenreIds": ["6007"], "type": "genre", "glow": "#56C7B0"},
     {"id": "utilities", "nameAr": "أدوات", "nameEn": "Utilities", "symbol": "wrench.and.screwdriver.fill",
@@ -234,7 +234,7 @@ def memberships(match):
     # Historical cached matches may lack primaryGenreId. Never let a broad
     # Entertainment secondary genre swallow a game with a real game subgenre.
     if is_game:
-        game_categories = ("action", "sports", "racing", "puzzle", "adventure", "strategy")
+        game_categories = ("action", "sports", "racing", "puzzle", "simulation", "adventure", "strategy")
         for genre in ([primary] if primary else []) + sorted(genres):
             for cat in CATEGORIES:
                 if cat["id"] in game_categories and genre in cat["appleGenreIds"]:
@@ -371,6 +371,9 @@ def self_test():
     assert memberships({"genreIds": ["6014", "6016", "7001"], "price": 0}) == ["action"]
     assert memberships({"genreIds": ["6014", "6016"], "price": 0}) == []
     assert memberships({"genreIds": ["6016"], "price": 0}) == ["entertainment"]
+    assert memberships({"genreIds": ["6027"], "price": 0}) == ["photo-video"]
+    assert memberships({"genreIds": ["6014", "7015"], "price": 0}) == ["simulation"]
+    assert memberships({"genreIds": ["6014", "7015"], "price": 3}) == ["paid-games"]
     assert value["checkedCount"] == 2
     assert value["sourceCount"] == 3
     cached = build(sample, value, 5, lambda _: 1 / 0, min_delay=0)
