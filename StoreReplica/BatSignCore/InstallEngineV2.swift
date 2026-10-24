@@ -201,13 +201,16 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
         }
 
         let raw = app.effectiveDownloadURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let sourceIcon = app.iconUrl?.isEmpty == false
+            ? app.iconUrl
+            : TransferActivityCenter.shared.trackedApp(id: app.id)?.iconUrl
         let job = StoreInstallJob(
             id: UUID().uuidString,
             appID: app.id,
             appName: app.name,
             bundleID: app.bundleId ?? app.id,
             version: app.version ?? "1.0",
-            iconURL: app.iconUrl,
+            iconURL: sourceIcon,
             downloadURL: raw,
             expectedBytes: app.fileSize ?? 0
         )

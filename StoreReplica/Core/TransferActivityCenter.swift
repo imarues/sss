@@ -109,7 +109,16 @@ final class TransferActivityCenter: NSObject, ObservableObject {
 
     func track(_ app: StoreApp) {
         DispatchQueue.main.async {
-            self.trackedApps[app.id] = app
+            // Downloads-library rows can represent a saved IPA without
+            // carrying its original icon URL. Never overwrite previously
+            // persisted artwork with nil when that row is installed again.
+            var stored = app
+            if stored.iconUrl?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false,
+               let previous = self.trackedApps[app.id],
+               let icon = previous.iconUrl, !icon.isEmpty {
+                stored.iconUrl = icon
+            }
+            self.trackedApps[app.id] = stored
             self.persistTrackedApps()
         }
     }
