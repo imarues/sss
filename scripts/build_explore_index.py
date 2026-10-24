@@ -35,6 +35,8 @@ NEGATIVE_TTL_HOURS = 48
 CATEGORIES = [
     {"id": "paid-games", "nameAr": "ألعاب مدفوعة", "nameEn": "Paid Games", "symbol": "creditcard.fill",
      "appleGenreIds": ["6014"], "type": "paid-game", "glow": "#547DF5"},
+    {"id": "paid-apps", "nameAr": "تطبيقات مدفوعة", "nameEn": "Paid Apps", "symbol": "creditcard",
+     "appleGenreIds": [], "type": "paid-app", "glow": "#748DF5"},
     {"id": "action", "nameAr": "أكشن", "nameEn": "Action", "symbol": "bolt.fill",
      "appleGenreIds": ["7001"], "type": "genre", "glow": "#F17D6D"},
     {"id": "sports", "nameAr": "ألعاب رياضية", "nameEn": "Sports Games", "symbol": "trophy.fill",
@@ -53,6 +55,16 @@ CATEGORIES = [
      "appleGenreIds": ["6007"], "type": "genre", "glow": "#56C7B0"},
     {"id": "utilities", "nameAr": "أدوات", "nameEn": "Utilities", "symbol": "wrench.and.screwdriver.fill",
      "appleGenreIds": ["6002"], "type": "genre", "glow": "#9AABD5"},
+    {"id": "adventure", "nameAr": "مغامرات", "nameEn": "Adventure", "symbol": "map.fill",
+     "appleGenreIds": ["7002"], "type": "genre", "glow": "#E0A35C"},
+    {"id": "strategy", "nameAr": "استراتيجية", "nameEn": "Strategy", "symbol": "chess.rook.fill",
+     "appleGenreIds": ["7017"], "type": "genre", "glow": "#B9A2E6"},
+    {"id": "education", "nameAr": "تعليم", "nameEn": "Education", "symbol": "book.fill",
+     "appleGenreIds": ["6017"], "type": "genre", "glow": "#6FBFDF"},
+    {"id": "music", "nameAr": "موسيقى وصوتيات", "nameEn": "Music", "symbol": "music.note",
+     "appleGenreIds": ["6011"], "type": "genre", "glow": "#D47DD7"},
+    {"id": "entertainment", "nameAr": "ترفيه", "nameEn": "Entertainment", "symbol": "play.rectangle.fill",
+     "appleGenreIds": ["6016"], "type": "genre", "glow": "#E6A477"},
 ]
 HEADERS = {"User-Agent": "TurathExploreIndexer/1.0", "Accept": "application/json"}
 HINT = re.compile(r"(?:لعبة\s*مدفوعة|مدفوع[ة]?\s*في\s*المتجر|paid\s+game|paid\s+(?:on\s+)?app\s*store)", re.I)
@@ -198,6 +210,7 @@ def lookup(entry):
                 "bundleId": returned_bundle,
                 "appleId": apple.get("trackId"),
                 "genreIds": sorted(genres),
+                "primaryGenreId": str(primary) if primary is not None else None,
                 "price": price,
                 "country": country,
                 "matchType": "apple-id" if track else "exact-bundle",
@@ -206,24 +219,26 @@ def lookup(entry):
 
 
 def memberships(match):
+    """Exactly one category per Apple-verified app, or none."""
     if not isinstance(match, dict) or not match.get("genreIds"):
         return []
     genres = set(map(str, match["genreIds"]))
-    # Keep restricted casino/betting subgenres out of the public game lists.
     if "7006" in genres:
         return []
+    primary = str(match.get("primaryGenreId") or "")
     is_game = "6014" in genres or any(x.startswith("70") for x in genres)
     price = match.get("price")
-    output = []
-    for cat in CATEGORIES:
-        identifier = cat["id"]
-        if identifier == "paid-games":
-            if is_game and isinstance(price, (int, float)) and price > 0:
-                output.append(identifier)
-        elif genres.intersection(cat["appleGenreIds"]):
-            output.append(identifier)
-    return output
-
+    paid = isinstance(price, (int, float)) and not isinstance(price, bool) and price > 0
+    if paid:
+        return ["paid-games" if is_game else "paid-apps"]
+    # Prefer Apple's primary genre. Secondary genres only help when primary
+    # is unavailable or does not map to any of our categories.
+    for genre_set in ([primary] if primary else [], sorted(genres)):
+        for genre in genre_set:
+            for cat in CATEGORIES:
+                if cat["type"] == "genre" and genre in cat["appleGenreIds"]:
+                    return [cat["id"]]
+    return []
 
 def normalize_entries(root):
     rows = root.get("apps")
@@ -307,6 +322,7 @@ def build(source, old, budget, lookup_fn=lookup, now=None, min_delay=1.5):
         for cat_id in memberships(entry.get("apple")):
             category_apps[cat_id].append(key)
 
+    assert sum(map(len, category_apps.values())) == len(set(key for ids in category_apps.values() for key in ids)), "Duplicate app across categories"
     categories = [
         dict(cat, appIDs=category_apps[cat["id"]], count=len(category_apps[cat["id"]]))
         for cat in CATEGORIES
@@ -337,9 +353,14 @@ def self_test():
     value = build(sample, {}, 5, stub, min_delay=0)
     categories = {c["id"]: c for c in value["categories"]}
     assert categories["paid-games"]["appIDs"] == ["a"]
-    assert categories["action"]["appIDs"] == ["a"]
+    assert categories["action"]["appIDs"] == []
     assert categories["utilities"]["appIDs"] == ["b"]
     assert categories["sports"]["appIDs"] == []
+    assert categories["paid-apps"]["appIDs"] == []
+    assert memberships({"genreIds": ["6005", "6007"], "primaryGenreId": "6005", "price": 0}) == ["social"]
+    assert memberships({"genreIds": ["6005", "6007"], "primaryGenreId": "6007", "price": 0}) == ["productivity"]
+    assert memberships({"genreIds": ["6007"], "primaryGenreId": "6007", "price": 2}) == ["paid-apps"]
+    assert memberships({"genreIds": ["6014", "7001"], "primaryGenreId": "7001", "price": 0}) == ["action"]
     assert value["checkedCount"] == 2
     assert value["sourceCount"] == 3
     cached = build(sample, value, 5, lambda _: 1 / 0, min_delay=0)
