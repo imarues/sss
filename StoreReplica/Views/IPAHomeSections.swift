@@ -57,22 +57,38 @@ final class IPAHomeCollections: ObservableObject {
     }
 }
 
+@MainActor
 private enum IPAHomeDate {
+    // Shared formatters: don't allocate new ISO/date formatters per application.
+    private static let isoFractional: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private static let isoStandard: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+    private static let parsers: [DateFormatter] = [
+        "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd", "dd-MM-yyyy", "dd/MM/yyyy", "yyyy/MM/dd"
+    ].map { format in
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(secondsFromGMT: 0)
+        f.dateFormat = format
+        return f
+    }
+
     static func parse(_ raw: String) -> Date? {
         let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if let seconds = Double(value), seconds > 1_000_000_000 {
             return Date(timeIntervalSince1970: seconds > 10_000_000_000 ? seconds / 1000 : seconds)
         }
-        let iso = ISO8601DateFormatter()
-        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = iso.date(from: value) { return date }
-        iso.formatOptions = [.withInternetDateTime]
-        if let date = iso.date(from: value) { return date }
-        for format in ["yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd", "dd-MM-yyyy", "dd/MM/yyyy", "yyyy/MM/dd"] {
-            let parser = DateFormatter()
-            parser.locale = Locale(identifier: "en_US_POSIX")
-            parser.timeZone = TimeZone(secondsFromGMT: 0)
-            parser.dateFormat = format
+        if let date = isoFractional.date(from: value) ?? isoStandard.date(from: value) {
+            return date
+        }
+        for parser in parsers {
             if let date = parser.date(from: value) { return date }
         }
         return nil
@@ -88,12 +104,12 @@ struct IPAHomeSections: View {
                 VStack(alignment: .trailing, spacing: 13) {
                     heading("الفئات")
                     ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 11) {
+                        LazyHStack(spacing: 11) {
                             ForEach(source.categories) { category in
                                 NavigationLink(destination: IPAHomeCollectionList(
                                     title: category.name, apps: category.apps ?? [], showsBundle: true)) {
                                     IPACategoryTile(category: category)
-                                }.buttonStyle(.plain)
+                                }.buttonStyle(StoreGlassPressStyle())
                             }
                         }.padding(.horizontal, StoreTheme.pageHorizontal)
                     }
@@ -143,7 +159,7 @@ struct IPAHomeSections: View {
                 ForEach(Array(apps.prefix(5).enumerated()), id: \.element.id) { index, app in
                     NavigationLink(destination: AppDetailView(app: app)) {
                         IPAGlowAppCard(app: app, index: index, showsBundle: showsBundle, showsDate: showsDate)
-                    }.buttonStyle(.plain)
+                    }.buttonStyle(StoreGlassPressStyle())
                 }
             }.padding(.horizontal, StoreTheme.pageHorizontal)
         }
@@ -172,7 +188,15 @@ private struct IPACategoryTile: View {
                            startPoint: .topLeading, endPoint: .bottomTrailing),
             in: RoundedRectangle(cornerRadius: 20, style: .continuous)
         )
-        .overlay(RoundedRectangle(cornerRadius: 20).stroke(.white.opacity(0.10), lineWidth: 0.8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(LinearGradient(
+                    colors: [.white.opacity(0.30), .white.opacity(0.05),
+                             StoreTheme.accent.opacity(0.17)],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                ), lineWidth: 0.8)
+                .allowsHitTesting(false)
+        }
     }
 }
 
@@ -201,21 +225,22 @@ private struct IPAGlowAppCard: View {
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(Color(red: 0.075, green: 0.10, blue: 0.18))
-            GeometryReader { proxy in
-                Circle()
-                    .fill(glow.opacity(0.63))
-                    .frame(width: proxy.size.width * 0.68, height: 185)
-                    .blur(radius: 42)
-                    .offset(x: proxy.size.width * 0.52, y: -34)
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(LinearGradient(colors: [.clear, .white.opacity(0.10), .clear],
-                                         startPoint: .top, endPoint: .bottom))
-                    .frame(width: 54, height: 230)
-                    .rotationEffect(.degrees(28))
-                    .offset(x: proxy.size.width * 0.62, y: -45)
-                    .blur(radius: 12)
-            }.clipped()
+                .fill(LinearGradient(
+                    colors: [glow.opacity(0.27),
+                             Color(red: 0.11, green: 0.15, blue: 0.25),
+                             Color(red: 0.075, green: 0.10, blue: 0.18)],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                ))
+            // Liquid-looking gradients without blurred offscreen layers.
+            RadialGradient(
+                colors: [glow.opacity(0.36), glow.opacity(0.08), .clear],
+                center: .topTrailing, startRadius: 0, endRadius: 220
+            )
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(LinearGradient(
+                    colors: [.white.opacity(0.13), .clear, .white.opacity(0.02)],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                ))
             HStack(spacing: 12) {
                 VStack(alignment: .leading) {
                     Text(StoreLanguage.localized(app.isDylibAsset ? "عرض" : "تثبيت"))
@@ -253,8 +278,18 @@ private struct IPAGlowAppCard: View {
         }
         .frame(height: 125)
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 24).stroke(.white.opacity(0.10), lineWidth: 0.8))
-        .shadow(color: glow.opacity(0.16), radius: 12, y: 5)
+        .overlay {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(
+                    LinearGradient(
+                        colors: [.white.opacity(0.35), glow.opacity(0.27),
+                                 .white.opacity(0.06)],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    ), lineWidth: 0.85
+                )
+                .allowsHitTesting(false)
+        }
+        .shadow(color: glow.opacity(0.12), radius: 6, y: 3)
     }
 }
 
@@ -269,7 +304,7 @@ private struct IPAHomeCollectionList: View {
                 ForEach(Array(apps.enumerated()), id: \.element.id) { index, app in
                     NavigationLink(destination: AppDetailView(app: app)) {
                         IPAGlowAppCard(app: app, index: index, showsBundle: showsBundle, showsDate: true)
-                    }.buttonStyle(.plain)
+                    }.buttonStyle(StoreGlassPressStyle())
                 }
             }.padding(16)
         }
