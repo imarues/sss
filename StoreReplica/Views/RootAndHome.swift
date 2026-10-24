@@ -133,6 +133,7 @@ struct FloatingStoreTabBar: View {
                                 .matchedGeometryEffect(id: "active", in: animation)
                         }
                     }
+                    .animation(.easeOut(duration: 0.22), value: selected == tab)
                 }
                 .buttonStyle(StoreGlassPressStyle())
             }
