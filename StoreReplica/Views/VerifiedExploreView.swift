@@ -82,8 +82,8 @@ private enum VerifiedExploreCache {
         let result = try JSONDecoder().decode(VerifiedExploreIndex.self, from: data)
         guard result.schema == 1,
               result.source == source,
-              result.categories.count == 10,
-              Set(result.categories.map(\.id)).count == 10,
+              !result.categories.isEmpty,
+              Set(result.categories.map(\.id)).count == result.categories.count,
               result.categories.allSatisfy({
                   $0.count == $0.appIDs.count &&
                   $0.count >= 0 &&
