@@ -37,6 +37,10 @@ CATEGORIES = [
      "appleGenreIds": ["6014"], "type": "paid-game", "glow": "#547DF5"},
     {"id": "paid-apps", "nameAr": "تطبيقات مدفوعة", "nameEn": "Paid Apps", "symbol": "creditcard",
      "appleGenreIds": [], "type": "paid-app", "glow": "#748DF5"},
+    {"id": "entertainment", "nameAr": "ترفيه", "nameEn": "Entertainment", "symbol": "play.rectangle.fill",
+     "appleGenreIds": ["6016"], "type": "genre", "glow": "#E6A477"},
+    {"id": "social", "nameAr": "تواصل اجتماعي", "nameEn": "Social Networking", "symbol": "bubble.left.and.bubble.right.fill",
+     "appleGenreIds": ["6005"], "type": "genre", "glow": "#5BB7F4"},
     {"id": "action", "nameAr": "أكشن", "nameEn": "Action", "symbol": "bolt.fill",
      "appleGenreIds": ["7001"], "type": "genre", "glow": "#F17D6D"},
     {"id": "sports", "nameAr": "ألعاب رياضية", "nameEn": "Sports Games", "symbol": "trophy.fill",
@@ -49,8 +53,6 @@ CATEGORIES = [
      "appleGenreIds": ["6027"], "type": "genre", "glow": "#C179E8"},
     {"id": "photo-video", "nameAr": "صور وفيديو", "nameEn": "Photo & Video", "symbol": "camera.fill",
      "appleGenreIds": ["6008"], "type": "genre", "glow": "#F278B4"},
-    {"id": "social", "nameAr": "تواصل اجتماعي", "nameEn": "Social Networking", "symbol": "bubble.left.and.bubble.right.fill",
-     "appleGenreIds": ["6005"], "type": "genre", "glow": "#5BB7F4"},
     {"id": "productivity", "nameAr": "إنتاجية", "nameEn": "Productivity", "symbol": "checkmark.square.fill",
      "appleGenreIds": ["6007"], "type": "genre", "glow": "#56C7B0"},
     {"id": "utilities", "nameAr": "أدوات", "nameEn": "Utilities", "symbol": "wrench.and.screwdriver.fill",
@@ -63,8 +65,6 @@ CATEGORIES = [
      "appleGenreIds": ["6017"], "type": "genre", "glow": "#6FBFDF"},
     {"id": "music", "nameAr": "موسيقى وصوتيات", "nameEn": "Music", "symbol": "music.note",
      "appleGenreIds": ["6011"], "type": "genre", "glow": "#D47DD7"},
-    {"id": "entertainment", "nameAr": "ترفيه", "nameEn": "Entertainment", "symbol": "play.rectangle.fill",
-     "appleGenreIds": ["6016"], "type": "genre", "glow": "#E6A477"},
 ]
 HEADERS = {"User-Agent": "TurathExploreIndexer/1.0", "Accept": "application/json"}
 HINT = re.compile(r"(?:لعبة\s*مدفوعة|مدفوع[ة]?\s*في\s*المتجر|paid\s+game|paid\s+(?:on\s+)?app\s*store)", re.I)
