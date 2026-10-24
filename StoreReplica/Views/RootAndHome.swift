@@ -6,14 +6,16 @@ struct RootStoreView: View {
     @EnvironmentObject private var store: StoreViewModel
     @State private var splashVisible = true
     @AppStorage("store.language") private var language = "ar"
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ZStack {
-            MainStoreShell().opacity(splashVisible ? 0 : 1)
             if splashVisible {
                 SplashView(spec: store.config.splash)
-                    .transition(.opacity.combined(with: .scale(scale: 1.02)))
-                    .zIndex(10)
+                    .transition(.opacity)
+            } else {
+                MainStoreShell()
+                    .transition(.opacity)
             }
         }
         .background(StoreTheme.background.ignoresSafeArea())
@@ -21,9 +23,13 @@ struct RootStoreView: View {
         .environment(\.layoutDirection, language == "en" ? .leftToRight : .rightToLeft)
         .task {
             async let data: Void = store.load()
-            let seconds = store.config.splash?.seconds ?? 3
-            try? await Task.sleep(nanoseconds: UInt64(max(1.2, seconds) * 1_000_000_000))
-            withAnimation(.easeInOut(duration: 0.42)) { splashVisible = false }
+            // Reduce startup latency; do not build the main view behind the splash.
+            let seconds = min(1.6, max(0.8, store.config.splash?.seconds ?? 1.3))
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) {
+                splashVisible = false
+            }
             _ = await data
         }
     }
@@ -33,6 +39,7 @@ struct SplashView: View {
     let spec: SplashSpec?
     @State private var breathe = false
     @State private var sweep = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ZStack {
@@ -60,8 +67,9 @@ struct SplashView: View {
                 .frame(width: 110, height: 600).rotationEffect(.degrees(17)).offset(x: sweep ? 300 : -300).blur(radius: 7)
         }
         .onAppear {
-            withAnimation(.easeInOut(duration: 1.55).repeatForever(autoreverses: true)) { breathe = true }
-            withAnimation(.easeInOut(duration: 1.9).repeatForever(autoreverses: false)) { sweep = true }
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 1.0)) { breathe = true }
+            withAnimation(.easeOut(duration: 1.2)) { sweep = true }
         }
     }
 }
@@ -100,7 +108,9 @@ struct FloatingStoreTabBar: View {
         HStack(spacing: 2) {
             ForEach(StoreTab.allCases) { tab in
                 Button {
-                    withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) { selected = tab }
+                    guard selected != tab else { return }
+                    // Avoid animating heavy tab content and its network state.
+                    selected = tab
                 } label: {
                     VStack(spacing: 5) {
                         Image(systemName: tab.icon).font(.system(size: 17, weight: .semibold))
@@ -109,16 +119,44 @@ struct FloatingStoreTabBar: View {
                     .foregroundStyle(selected == tab ? StoreTheme.accent : StoreTheme.tabInactive)
                     .frame(maxWidth: .infinity, minHeight: 54)
                     .background {
-                        if selected == tab { RoundedRectangle(cornerRadius: 15, style: .continuous).fill(StoreTheme.accent.opacity(0.10)).matchedGeometryEffect(id: "active", in: animation) }
+                        if selected == tab {
+                            RoundedRectangle(cornerRadius: 15, style: .continuous)
+                                .fill(LinearGradient(
+                                    colors: [StoreTheme.accent.opacity(0.25),
+                                             StoreTheme.accent.opacity(0.08)],
+                                    startPoint: .topLeading, endPoint: .bottomTrailing
+                                ))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 15, style: .continuous)
+                                        .stroke(.white.opacity(0.24), lineWidth: 0.75)
+                                }
+                                .matchedGeometryEffect(id: "active", in: animation)
+                        }
                     }
-                }.buttonStyle(.plain)
+                }
+                .buttonStyle(StoreGlassPressStyle())
             }
         }
         .padding(7).frame(maxWidth: 460)
-        .background(.ultraThinMaterial).background(StoreTheme.sheet.opacity(0.88))
+        .background {
+            RoundedRectangle(cornerRadius: 23, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 23, style: .continuous)
+                        .fill(StoreTheme.sheet.opacity(0.58))
+                }
+        }
         .clipShape(RoundedRectangle(cornerRadius: 23, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 23, style: .continuous).stroke(StoreTheme.surfaceBorder.opacity(0.85), lineWidth: 0.8))
-        .shadow(color: .black.opacity(0.35), radius: 24, y: 12)
+        .overlay {
+            RoundedRectangle(cornerRadius: 23, style: .continuous)
+                .stroke(LinearGradient(
+                    colors: [.white.opacity(0.33), StoreTheme.accent.opacity(0.16),
+                             .white.opacity(0.08)],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                ), lineWidth: 0.85)
+                .allowsHitTesting(false)
+        }
+        .shadow(color: .black.opacity(0.22), radius: 12, y: 6)
         .padding(.horizontal, 14).padding(.bottom, 8)
     }
 }
@@ -140,7 +178,9 @@ struct StoreHeader: View {
             HStack(spacing: 9) {
                 Button { showSettings = true } label: {
                     ZStack {
-                        Circle().fill(StoreTheme.surface)
+                        Circle().fill(.ultraThinMaterial)
+                            .overlay(Circle().fill(StoreTheme.surface.opacity(0.64)))
+                            .overlay(Circle().stroke(.white.opacity(0.19), lineWidth: 0.75))
                         Image(systemName: "gearshape.fill")
                             .font(.system(size: 17, weight: .bold))
                             .foregroundStyle(StoreTheme.textPrimary)
@@ -152,7 +192,9 @@ struct StoreHeader: View {
                 Button { showSigningHub = true } label: {
                     ZStack(alignment: .topTrailing) {
                         ZStack {
-                            Circle().fill(StoreTheme.surface)
+                            Circle().fill(.ultraThinMaterial)
+                            .overlay(Circle().fill(StoreTheme.surface.opacity(0.64)))
+                            .overlay(Circle().stroke(.white.opacity(0.19), lineWidth: 0.75))
                             Image(systemName: "square.and.arrow.down")
                                 .font(.system(size: 18, weight: .bold))
                                 .foregroundStyle(StoreTheme.textPrimary)
@@ -261,20 +303,20 @@ struct HomeSectionRenderer: View {
 
     private var band: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) {
+            LazyHStack(spacing: 12) {
                 ForEach(section.apps ?? []) { app in NavigationLink(destination: AppDetailView(app: app)) { BandCard(app: app) }.buttonStyle(.plain) }
             }.padding(.horizontal, StoreTheme.pageHorizontal)
         }
     }
     private var showcase: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) { ForEach(section.apps ?? []) { app in NavigationLink(destination: AppDetailView(app: app)) { ShowcaseCard(app: app) }.buttonStyle(.plain) } }
+            LazyHStack(spacing: 12) { ForEach(section.apps ?? []) { app in NavigationLink(destination: AppDetailView(app: app)) { ShowcaseCard(app: app) }.buttonStyle(.plain) } }
                 .padding(.horizontal, StoreTheme.pageHorizontal)
         }
     }
     private var categoryStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) { ForEach(section.categories ?? []) { CategoryStripCard(category: $0) } }.padding(.horizontal, StoreTheme.pageHorizontal)
+            LazyHStack(spacing: 10) { ForEach(section.categories ?? []) { CategoryStripCard(category: $0) } }.padding(.horizontal, StoreTheme.pageHorizontal)
         }
     }
     private var categoryGrid: some View {
