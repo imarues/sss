@@ -15,7 +15,9 @@ struct RemoteImage: View {
                 AsyncImage(url: url) { phase in
                     if let image = phase.image { image.resizable().scaledToFill() }
                     else if phase.error != nil { fallback }
-                    else { ZStack { StoreTheme.field; ProgressView().tint(StoreTheme.accent) } }
+                    // Dozens of spinning placeholders caused constant invalidations
+                    // in big Explore/Home lists. Use a static glass placeholder.
+                    else { fallback.opacity(0.75) }
                 }
             } else { fallback }
         }
@@ -317,7 +319,15 @@ struct AppIconView: View {
     var body: some View {
         RemoteImage(path: app.iconUrl, cornerRadius: size * 0.23)
             .frame(width: size, height: size)
-            .overlay(RoundedRectangle(cornerRadius: size * 0.23).stroke(Color.white.opacity(0.08), lineWidth: 0.7))
+            .overlay {
+                RoundedRectangle(cornerRadius: size * 0.23, style: .continuous)
+                    .stroke(LinearGradient(
+                        colors: [.white.opacity(0.42), .white.opacity(0.06),
+                                 StoreTheme.accent.opacity(0.16)],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    ), lineWidth: 0.8)
+                    .allowsHitTesting(false)
+            }
     }
 }
 
