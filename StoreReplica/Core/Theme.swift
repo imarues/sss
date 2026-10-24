@@ -59,11 +59,42 @@ enum FontLoader {
     }
 }
 
+/// A short tap response. No timers; respects Accessibility > Reduce Motion.
+struct StoreGlassPressStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.985 : 1)
+            .opacity(configuration.isPressed ? 0.94 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: configuration.isPressed)
+    }
+}
+
 extension View {
+    /// Lightweight specular highlights using gradients, not offscreen blur.
+    /// Works on iOS 16.1 and newer.
     func storeCard(radius: CGFloat = StoreTheme.cardRadius) -> some View {
-        self
-            .background(StoreTheme.surface)
-            .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).stroke(StoreTheme.surfaceBorder.opacity(0.72), lineWidth: 0.7))
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        return self
+            .background {
+                shape.fill(LinearGradient(
+                    colors: [StoreTheme.field.opacity(0.91),
+                             StoreTheme.surface.opacity(0.98), StoreTheme.surface],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                ))
+            }
+            .clipShape(shape)
+            .overlay {
+                shape.stroke(
+                    LinearGradient(
+                        colors: [.white.opacity(0.28), StoreTheme.accent.opacity(0.12),
+                                 .white.opacity(0.04), .white.opacity(0.13)],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 0.8
+                )
+                .allowsHitTesting(false)
+            }
     }
 }
