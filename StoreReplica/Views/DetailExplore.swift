@@ -499,17 +499,16 @@ struct AppDetailView: View {
         guard let date else { return String(raw.prefix(10)) }
 
         let output = DateFormatter()
-        output.locale = Locale(identifier: StoreLanguage.isEnglish ? "en_US" : "ar_IQ")
+        output.locale = StoreLanguage.isEnglish
+            ? StoreDisplayFormat.latinLocale
+            : StoreDisplayFormat.arabicLatinLocale
         output.calendar = Calendar(identifier: .gregorian)
         output.dateFormat = StoreLanguage.isEnglish ? "MMM d, yyyy" : "d MMMM yyyy"
         return output.string(from: date)
     }
 
     private func formatBytes(_ value: Int64) -> String {
-        if StoreLanguage.isEnglish {
-            return String(format: "%.1f MB", Double(value) / 1_000_000)
-        }
-        return ByteCountFormatter.string(fromByteCount: value, countStyle: .file)
+        StoreDisplayFormat.bytes(value)
     }
 }
 

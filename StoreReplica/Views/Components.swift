@@ -364,7 +364,7 @@ struct ShowcaseCard: View {
             AppIconView(app: app, size: 76)
             VStack(spacing: 4) {
                 Text(app.name.storeForcedRTL).font(AppFont.bold(15)).foregroundStyle(StoreTheme.textPrimary).lineLimit(1)
-                Text(StoreLanguage.localized("الإصدار") + " " + (app.version ?? "—")).font(AppFont.regular(11)).foregroundStyle(StoreTheme.textSecondary)
+                Text(StoreLanguage.localized("الإصدار") + " " + (app.version.map(StoreDisplayFormat.digits) ?? "—")).font(AppFont.regular(11)).foregroundStyle(StoreTheme.textSecondary)
             }
             InstallPill(app: app)
         }
@@ -380,7 +380,7 @@ struct LargeListRow: View {
             AppIconView(app: app, size: 62)
             VStack(alignment: .trailing, spacing: 5) {
                 Text(app.name.storeForcedRTL).font(AppFont.bold(15)).foregroundStyle(StoreTheme.textPrimary).lineLimit(1)
-                Text((app.notes ?? "الإصدار \(app.version ?? "—")").storeForcedRTL)
+                Text((app.notes ?? "الإصدار \(app.version.map(StoreDisplayFormat.digits) ?? "—")").storeForcedRTL)
                     .font(AppFont.regular(11.5))
                     .foregroundStyle(StoreTheme.textSecondary)
                     .lineLimit(2)

@@ -47,7 +47,7 @@ private enum UpdatesViewDateTools {
         let delta = calendar.dateComponents([.day], from: selected, to: today).day ?? 0
         if delta == 0 { return "اليوم" }
         if delta == 1 { return "أمس" }
-        return formatter("d MMM", locale: "ar_IQ").string(from: date)
+        return formatter("d MMM", locale: "ar_IQ@numbers=latn").string(from: date)
     }
 }
 

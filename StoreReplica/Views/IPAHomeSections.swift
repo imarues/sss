@@ -157,9 +157,7 @@ struct IPAHomeSections: View {
             }.padding(.horizontal, StoreTheme.pageHorizontal)
             LazyVStack(spacing: 12) {
                 ForEach(Array(apps.prefix(5).enumerated()), id: \.element.id) { index, app in
-                    NavigationLink(destination: AppDetailView(app: app)) {
-                        IPAGlowAppCard(app: app, index: index, showsBundle: showsBundle, showsDate: showsDate)
-                    }.buttonStyle(StoreGlassPressStyle())
+                    IPAGlowAppCard(app: app, index: index, showsBundle: showsBundle, showsDate: showsDate)
                 }
             }.padding(.horizontal, StoreTheme.pageHorizontal)
         }
@@ -205,6 +203,17 @@ private struct IPAGlowAppCard: View {
     let index: Int
     let showsBundle: Bool
     let showsDate: Bool
+    @State private var showDuplicate = false
+
+    private func openDuplicateSheet() {
+        if SigningAssetProvider.hasCredentials {
+            showDuplicate = true
+        } else {
+            SigningSetupCoordinator.shared.request {
+                showDuplicate = true
+            }
+        }
+    }
 
     private var glow: Color {
         let colors: [Color] = [
@@ -219,7 +228,7 @@ private struct IPAGlowAppCard: View {
 
     private var sizeText: String {
         guard let bytes = app.fileSize, bytes > 0 else { return StoreLanguage.localized("الحجم غير متوفر") }
-        return StoreLanguage.isEnglish ? String(format: "%.1f MB", Double(bytes) / 1_000_000) : ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+        return StoreDisplayFormat.bytes(bytes)
     }
 
     var body: some View {
@@ -241,42 +250,68 @@ private struct IPAGlowAppCard: View {
                     colors: [.white.opacity(0.13), .clear, .white.opacity(0.02)],
                     startPoint: .topLeading, endPoint: .bottomTrailing
                 ))
-            HStack(spacing: 12) {
-                VStack(alignment: .leading) {
-                    Text(StoreLanguage.localized(app.isDylibAsset ? "عرض" : "تثبيت"))
-                        .font(AppFont.bold(13))
-                        .foregroundStyle(Color(red: 0.06, green: 0.10, blue: 0.19))
-                        .padding(.horizontal, 17)
-                        .frame(height: 39)
-                        .background(Color(red: 0.48, green: 0.65, blue: 1), in: Capsule())
-                    Spacer(minLength: 0)
-                }
-                Spacer(minLength: 3)
-                VStack(alignment: .trailing, spacing: 7) {
-                    Text(app.name)
-                        .font(AppFont.bold(15)).foregroundStyle(.white)
-                        .lineLimit(1)
-                    Text([app.version.map { "v" + $0 }, sizeText].compactMap { $0 }.joined(separator: " · "))
-                        .font(AppFont.medium(11)).foregroundStyle(.white.opacity(0.69))
-                        .lineLimit(1)
-                    if showsBundle, let bundle = app.bundleId, !bundle.isEmpty {
-                        Text(bundle).font(.system(size: 10, weight: .medium, design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.52)).lineLimit(1)
-                    }
-                    if showsDate {
-                        let date = app.updatedAt ?? app.versionUpdatedAt ?? app.addedAt
-                        if let date, !date.isEmpty {
-                            Text(StoreLanguage.localized("تاريخ التحديث: ") + date)
-                                .font(AppFont.medium(10)).foregroundStyle(.white.opacity(0.53))
-                                .lineLimit(1)
+            HStack(spacing: 9) {
+                // Actions are outside the NavigationLink to avoid nested buttons.
+                VStack(spacing: 7) {
+                    if app.isDylibAsset {
+                        Text(StoreLanguage.localized("عرض"))
+                            .font(AppFont.bold(12))
+                            .foregroundStyle(StoreTheme.onAccent)
+                            .frame(maxWidth: .infinity, minHeight: 32)
+                            .background(StoreTheme.accent, in: Capsule())
+                    } else {
+                        InstallPill(app: app)
+                            .frame(maxWidth: .infinity)
+                        Button(action: openDuplicateSheet) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "plus.square.on.square")
+                                    .font(.system(size: 10, weight: .bold))
+                                Text(StoreLanguage.localized("تكرار"))
+                                    .font(AppFont.bold(11))
+                            }
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity, minHeight: 29)
+                            .background(.white.opacity(0.11), in: Capsule())
+                            .overlay {
+                                Capsule().stroke(.white.opacity(0.22), lineWidth: 0.7)
+                            }
                         }
+                        .buttonStyle(StoreGlassPressStyle())
                     }
-                }.frame(maxWidth: .infinity, alignment: .trailing)
-                AppIconView(app: app, size: 64)
+                }
+                .frame(width: 83)
+                NavigationLink(destination: AppDetailView(app: app)) {
+                    HStack(spacing: 9) {
+                        VStack(alignment: .trailing, spacing: 4) {
+                            Text(StoreDisplayFormat.digits(app.name))
+                                .font(AppFont.bold(14)).foregroundStyle(.white).lineLimit(1)
+                            Text([app.version.map { "v" + StoreDisplayFormat.digits($0) }, sizeText]
+                                    .compactMap { $0 }.joined(separator: " · "))
+                                .font(AppFont.medium(10.5)).foregroundStyle(.white.opacity(0.72)).lineLimit(1)
+                            if showsBundle, let bundle = app.bundleId, !bundle.isEmpty {
+                                Text(StoreDisplayFormat.digits(bundle))
+                                    .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(.white.opacity(0.55)).lineLimit(1)
+                            }
+                            if showsDate {
+                                let date = app.updatedAt ?? app.versionUpdatedAt ?? app.addedAt
+                                if let date, !date.isEmpty {
+                                    Text(StoreLanguage.localized("تاريخ التحديث: ") + StoreDisplayFormat.digits(date))
+                                        .font(AppFont.medium(9.5)).foregroundStyle(.white.opacity(0.58)).lineLimit(1)
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        AppIconView(app: app, size: 54)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(StoreGlassPressStyle())
             }
-            .padding(16)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 10)
         }
-        .frame(height: 125)
+        .frame(height: 108)
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
@@ -290,6 +325,11 @@ private struct IPAGlowAppCard: View {
                 .allowsHitTesting(false)
         }
         .shadow(color: glow.opacity(0.12), radius: 6, y: 3)
+        .sheet(isPresented: $showDuplicate) {
+            AppCloneSheet(app: app)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.hidden)
+        }
     }
 }
 
@@ -302,9 +342,7 @@ private struct IPAHomeCollectionList: View {
         ScrollView {
             LazyVStack(spacing: 12) {
                 ForEach(Array(apps.enumerated()), id: \.element.id) { index, app in
-                    NavigationLink(destination: AppDetailView(app: app)) {
-                        IPAGlowAppCard(app: app, index: index, showsBundle: showsBundle, showsDate: true)
-                    }.buttonStyle(StoreGlassPressStyle())
+                    IPAGlowAppCard(app: app, index: index, showsBundle: showsBundle, showsDate: true)
                 }
             }.padding(16)
         }

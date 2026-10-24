@@ -76,7 +76,7 @@ struct SearchView: View {
                     Text("ابحث في كيرا بلس")
                         .font(AppFont.black(26))
                         .foregroundStyle(.white)
-                    Text("\(sourceCatalog.count.formatted()) " + StoreLanguage.localized("عنصر من IPA-AR و deb-AR"))
+                    Text("\(sourceCatalog.count.formatted(.number.locale(StoreDisplayFormat.latinLocale))) " + StoreLanguage.localized("عنصر من IPA-AR و deb-AR"))
                         .font(AppFont.regular(12))
                         .foregroundStyle(.white.opacity(0.72))
                 }
@@ -159,7 +159,7 @@ struct SearchView: View {
                                         .font(AppFont.bold(15))
                                         .foregroundStyle(StoreTheme.textPrimary)
                                         .lineLimit(1)
-                                    Text(app.notes ?? "الإصدار \(app.version ?? "—")")
+                                    Text(app.notes ?? "الإصدار \(app.version.map(StoreDisplayFormat.digits) ?? "—")")
                                         .font(AppFont.regular(11.5))
                                         .foregroundStyle(StoreTheme.textSecondary)
                                         .lineLimit(2)
@@ -327,7 +327,7 @@ struct ProductCard: View {
 
     private var priceText: String {
         guard let p = product.price else { return "—" }
-        return "\(p.formatted()) \(product.currency ?? "IQD")"
+        return "\(p.formatted(.number.locale(StoreDisplayFormat.latinLocale))) \(product.currency ?? "IQD")"
     }
 }
 
@@ -358,7 +358,7 @@ struct StoreSettingsView: View {
                     certificateManagerRow
                     favoritesSection
                     VStack(spacing: 0) {
-                        settingRow("عدد التطبيقات", "\((store.catalog.total ?? store.searchMeta.totalApps ?? 0).formatted())", "square.stack.3d.up.fill")
+                        settingRow("عدد التطبيقات", "\((store.catalog.total ?? store.searchMeta.totalApps ?? 0).formatted(.number.locale(StoreDisplayFormat.latinLocale)))", "square.stack.3d.up.fill")
                         Divider().overlay(StoreTheme.surfaceBorder)
                         settingRow("نمط التصميم", "Night", "moon.stars.fill")
                         Divider().overlay(StoreTheme.surfaceBorder)

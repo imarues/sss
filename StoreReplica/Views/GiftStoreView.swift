@@ -331,7 +331,7 @@ private struct GiftProductTile: View {
 private extension GiftProduct {
     var priceLabel: String {
         if price == 0 { return StoreLanguage.isEnglish ? "Ask for price" : "السعر عند الطلب" }
-        return "\(price.formatted()) \(currency)"
+        return "\(price.formatted(.number.locale(StoreDisplayFormat.latinLocale))) \(currency)"
     }
 }
 
@@ -377,7 +377,7 @@ struct GiftProductDetailView: View {
                         .foregroundStyle(StoreTheme.textSecondary)
                     HStack {
                         if let old = product.compareAtPrice, old > product.price {
-                            Text("\(old.formatted()) \(product.currency)")
+                            Text("\(old.formatted(.number.locale(StoreDisplayFormat.latinLocale))) \(product.currency)")
                                 .font(AppFont.medium(12))
                                 .strikethrough()
                                 .foregroundStyle(StoreTheme.textSecondary)

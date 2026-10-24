@@ -1049,10 +1049,6 @@ struct SigningHubView: View {
     }
 
     private func formatBytes(_ bytes: Int64) -> String {
-        guard bytes > 0 else { return "—" }
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .file
-        formatter.allowedUnits = bytes >= 1_000_000_000 ? [.useGB] : [.useMB]
-        return formatter.string(fromByteCount: bytes)
+        bytes > 0 ? StoreDisplayFormat.bytes(bytes) : "—"
     }
 }

@@ -19,7 +19,9 @@ struct RootStoreView: View {
             }
         }
         .background(StoreTheme.background.ignoresSafeArea())
-        .environment(\.locale, Locale(identifier: language))
+        .environment(\.locale, language == "en"
+            ? StoreDisplayFormat.latinLocale
+            : StoreDisplayFormat.arabicLatinLocale)
         .environment(\.layoutDirection, language == "en" ? .leftToRight : .rightToLeft)
         .task {
             async let data: Void = store.load()
@@ -58,7 +60,7 @@ struct SplashView: View {
                         .font(AppFont.medium(13)).foregroundStyle(Color.white.opacity(0.74)).multilineTextAlignment(.center).padding(.horizontal, 40)
                 }
                 if let count = spec?.appCount {
-                    Text(StoreLanguage.isEnglish ? "+\(count.formatted()) apps" : "+\(count.formatted()) تطبيق")
+                    Text(StoreLanguage.isEnglish ? "+\(StoreDisplayFormat.number(count)) apps" : "+\(StoreDisplayFormat.number(count)) تطبيق")
                         .font(AppFont.bold(12)).foregroundStyle(.white)
                         .padding(.horizontal, 15).frame(height: 31).background(Color.white.opacity(0.1)).clipShape(Capsule())
                 }
