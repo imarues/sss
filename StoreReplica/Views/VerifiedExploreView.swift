@@ -215,13 +215,27 @@ private final class VerifiedExploreModel: ObservableObject {
         }
         let existing = Set(index.categories.map(\.id))
         let categories = index.categories + Self.extraGenres.filter { !existing.contains($0.id) }
+        // Group once rather than scanning all 1,677 apps for every tile.
+        // This also preserves IPA-AR source order for newly added entries.
+        var grouped: [String: [StoreApp]] = [:]
+        for app in publishedApps where byID[app.id] != nil {
+            if let id = assigned[app.id] {
+                grouped[id, default: []].append(app)
+            }
+        }
         var usedArtwork: Set<String> = []
-        let allIDs = publishedApps.map(\.id)
         sections = categories.map { category in
+            let sourceApps = grouped[category.id] ?? []
             var seen: Set<String> = []
-            let apps = (category.appIDs + allIDs).compactMap { id -> StoreApp? in
-                guard assigned[id] == category.id, seen.insert(id).inserted else { return nil }
-                return byID[id]
+            var apps: [StoreApp] = []
+            apps.reserveCapacity(sourceApps.count)
+            for id in category.appIDs where assigned[id] == category.id {
+                if let app = byID[id], seen.insert(id).inserted {
+                    apps.append(app)
+                }
+            }
+            for app in sourceApps where seen.insert(app.id).inserted {
+                apps.append(app)
             }
             let picture = apps.first { app in
                 guard let key = iconKey(app) else { return false }
@@ -307,7 +321,7 @@ struct VerifiedExploreView: View {
                                 NavigationLink(destination: VerifiedGenreAppsView(section: section)) {
                                     VerifiedGlassCategoryCard(section: section)
                                 }
-                                .buttonStyle(VerifiedCategoryPressStyle())
+                                .buttonStyle(StoreGlassPressStyle())
                                 .accessibilityLabel(
                                     "\(section.category.localizedName), \(section.apps.count) " +
                                     (StoreLanguage.isEnglish ? "apps" : "تطبيق")
@@ -379,14 +393,6 @@ struct VerifiedExploreView: View {
     }
 }
 
-private struct VerifiedCategoryPressStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.965 : 1)
-            .animation(.easeOut(duration: 0.17), value: configuration.isPressed)
-    }
-}
-
 private struct VerifiedGlassCategoryCard: View {
     let section: VerifiedExploreSection
 
@@ -407,26 +413,17 @@ private struct VerifiedGlassCategoryCard: View {
                         endPoint: .bottomTrailing
                     )
                 )
-            GeometryReader { geometry in
-                Circle()
-                    .fill(tint.opacity(0.32))
-                    .frame(width: geometry.size.width * 0.84, height: 140)
-                    .blur(radius: 31)
-                    .offset(x: geometry.size.width * 0.35, y: -71)
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(
-                        LinearGradient(
-                            colors: [.clear, .white.opacity(0.21), .clear],
-                            startPoint: .top, endPoint: .bottom
-                        )
-                    )
-                    .frame(width: 37, height: 240)
-                    .rotationEffect(.degrees(24))
-                    .blur(radius: 9)
-                    .offset(x: geometry.size.width * 0.60, y: -42)
-            }
-            .clipped()
-
+            // Gradient optics remain crisp while scrolling; large blur filters
+            // used here previously were rendered independently for every card.
+            RadialGradient(
+                colors: [tint.opacity(0.35), tint.opacity(0.08), .clear],
+                center: .topTrailing, startRadius: 0, endRadius: 180
+            )
+            RoundedRectangle(cornerRadius: 23, style: .continuous)
+                .fill(LinearGradient(
+                    colors: [.white.opacity(0.15), .clear, .white.opacity(0.03)],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                ))
             VStack(alignment: .trailing, spacing: 0) {
                 HStack(spacing: 8) {
                     Image(systemName: StoreLanguage.isEnglish ? "chevron.right" : "chevron.left")
@@ -435,7 +432,7 @@ private struct VerifiedGlassCategoryCard: View {
                     Spacer()
                     if let picture {
                         AppIconView(app: picture, size: 60)
-                            .shadow(color: tint.opacity(0.38), radius: 12, y: 4)
+                            .shadow(color: tint.opacity(0.25), radius: 5, y: 2)
                     } else {
                         Image(systemName: section.category.symbol)
                             .font(.system(size: 27, weight: .semibold))
@@ -474,7 +471,7 @@ private struct VerifiedGlassCategoryCard: View {
                     lineWidth: 0.95
                 )
         }
-        .shadow(color: tint.opacity(0.16), radius: 13, y: 5)
+        .shadow(color: tint.opacity(0.12), radius: 6, y: 3)
     }
 }
 
