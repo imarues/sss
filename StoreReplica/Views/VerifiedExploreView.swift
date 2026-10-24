@@ -32,6 +32,7 @@ private struct VerifiedExploreGenre: Decodable, Identifiable {
 private struct VerifiedExploreSection: Identifiable {
     let category: VerifiedExploreGenre
     let apps: [StoreApp]
+    let picture: StoreApp?
     var id: String { category.id }
 }
 
@@ -110,6 +111,36 @@ private final class VerifiedExploreModel: ObservableObject {
     private var currentIndex: VerifiedExploreIndex?
     private var publishedApps: [StoreApp] = []
 
+    private static let extraGenres: [VerifiedExploreGenre] = [
+        VerifiedExploreGenre(id: "games", nameAr: "ألعاب متنوعة", nameEn: "Other Games",
+                             symbol: "gamecontroller.fill", glow: "#68AAEF", appIDs: [], count: 0),
+        VerifiedExploreGenre(id: "learning-ai", nameAr: "دراسة وذكاء اصطناعي", nameEn: "Learning & AI",
+                             symbol: "brain.head.profile", glow: "#82B4E4", appIDs: [], count: 0),
+        VerifiedExploreGenre(id: "other", nameAr: "تطبيقات أخرى", nameEn: "Other Apps",
+                             symbol: "square.grid.3x3.fill", glow: "#8896BC", appIDs: [], count: 0)
+    ]
+
+    private func iconKey(_ app: StoreApp) -> String? {
+        guard let raw = app.iconUrl?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let url = URL(string: raw),
+              ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return nil }
+        var parts = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        parts?.query = nil
+        parts?.fragment = nil
+        return (parts?.url?.absoluteString ?? raw).lowercased()
+    }
+
+    private func fallbackGenre(_ app: StoreApp) -> String {
+        switch app.categories?.first?.trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "ترفيه": return "entertainment"
+        case "تواصل": return "social"
+        case "أدوات": return "utilities"
+        case "دراسة وذكاء اصطناعي": return "learning-ai"
+        case "ألعاب": return "games"
+        default: return "other"
+        }
+    }
+
     func reload(force: Bool = false) async {
         guard !loading else { return }
         loading = true
@@ -166,15 +197,38 @@ private final class VerifiedExploreModel: ObservableObject {
             lastUpdated = nil
             return
         }
-        // Count is derived from real, currently published IPA-AR entries,
-        // not from Apple's entire store or hardcoded example numbers.
-        sections = index.categories.map { category in
-            var used: Set<String> = []
-            let apps = category.appIDs.compactMap { id -> StoreApp? in
-                guard used.insert(id).inserted else { return nil }
+        // Use Apple assignments when available, IPA-AR primary categories
+        // when Apple has no match or the public index is still catching up.
+        var assigned: [String: String] = [:]
+        for category in index.categories {
+            for id in category.appIDs where byID[id] != nil && assigned[id] == nil {
+                assigned[id] = category.id
+            }
+        }
+        for app in publishedApps {
+            let primary = app.categories?.first?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if primary == "ترفيه" || primary == "تواصل" {
+                assigned[app.id] = fallbackGenre(app)
+            } else if assigned[app.id] == nil {
+                assigned[app.id] = fallbackGenre(app)
+            }
+        }
+        let existing = Set(index.categories.map(\.id))
+        let categories = index.categories + Self.extraGenres.filter { !existing.contains($0.id) }
+        var usedArtwork: Set<String> = []
+        let allIDs = publishedApps.map(\.id)
+        sections = categories.map { category in
+            var seen: Set<String> = []
+            let apps = (category.appIDs + allIDs).compactMap { id -> StoreApp? in
+                guard assigned[id] == category.id, seen.insert(id).inserted else { return nil }
                 return byID[id]
             }
-            return VerifiedExploreSection(category: category, apps: apps)
+            let picture = apps.first { app in
+                guard let key = iconKey(app) else { return false }
+                return !usedArtwork.contains(key)
+            }
+            if let picture, let key = iconKey(picture) { usedArtwork.insert(key) }
+            return VerifiedExploreSection(category: category, apps: apps, picture: picture)
         }
         ipaCount = publishedApps.count
         checkedCount = index.checkedCount
@@ -203,8 +257,8 @@ struct VerifiedExploreView: View {
                                 .font(AppFont.black(29))
                                 .foregroundStyle(StoreTheme.textPrimary)
                             Text(StoreLanguage.isEnglish
-                                 ? "Browse our apps by real App Store genres"
-                                 : "اكتشف تطبيقاتنا حسب تصنيفات App Store الحقيقية")
+                                 ? "IPA-AR categories, enhanced by Apple when available"
+                                 : "تطبيقات IPA-AR بتصنيفاتها الأصلية مع بيانات Apple")
                                 .font(AppFont.regular(12))
                                 .foregroundStyle(StoreTheme.textSecondary)
                                 .multilineTextAlignment(.trailing)
@@ -306,8 +360,8 @@ struct VerifiedExploreView: View {
                         HStack(spacing: 7) {
                             Image(systemName: "info.circle")
                             Text(StoreLanguage.isEnglish
-                                 ? "Counts include only apps published by Turath and verified by Apple. Paid Games requires an official paid App Store price."
-                                 : "الأعداد تشمل فقط تطبيقات التراث التي تمت مطابقتها مع Apple. الألعاب المدفوعة تتطلب سعراً رسمياً أكبر من صفر.")
+                                 ? "IPA-AR apps remain visible without Apple matches. Paid groups require verified App Store prices."
+                                 : "التصنيفات تشمل تطبيقات IPA-AR حتى لو ما تطابقت مع Apple؛ الأقسام المدفوعة تتطلب سعراً رسمياً في App Store.")
                         }
                         .font(AppFont.regular(10.5))
                         .foregroundStyle(StoreTheme.textSecondary)
@@ -337,12 +391,7 @@ private struct VerifiedGlassCategoryCard: View {
     let section: VerifiedExploreSection
 
     private var tint: Color { section.category.glowColor }
-    private var picture: StoreApp? {
-        section.apps.first(where: {
-            if let icon = $0.iconUrl { return !icon.isEmpty }
-            return false
-        })
-    }
+    private var picture: StoreApp? { section.picture }
 
     var body: some View {
         ZStack {
@@ -440,8 +489,8 @@ private struct VerifiedGenreAppsView: View {
                         .font(AppFont.black(26))
                         .foregroundStyle(StoreTheme.textPrimary)
                     Text(StoreLanguage.isEnglish
-                         ? "\(section.apps.count) verified Turath apps"
-                         : "\(section.apps.count) تطبيق مؤكد من تطبيقات التراث")
+                         ? "\(section.apps.count) Turath apps"
+                         : "\(section.apps.count) تطبيق من تطبيقات التراث")
                         .font(AppFont.medium(12))
                         .foregroundStyle(StoreTheme.textSecondary)
                 }
@@ -454,8 +503,8 @@ private struct VerifiedGenreAppsView: View {
                             .font(.system(size: 35))
                             .foregroundStyle(section.category.glowColor)
                         Text(StoreLanguage.isEnglish
-                             ? "No published apps have been verified in this category yet."
-                             : "ماكو تطبيقات منشورة تمت مطابقتها مع Apple بهذا التصنيف بعد.")
+                             ? "No published apps in this category yet."
+                             : "ماكو تطبيقات منشورة بهذا التصنيف حالياً.")
                             .font(AppFont.medium(13))
                             .foregroundStyle(StoreTheme.textSecondary)
                             .multilineTextAlignment(.center)

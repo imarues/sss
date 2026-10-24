@@ -5,10 +5,9 @@ Usage (public imarues/sss repository only):
   python3 scripts/build_explore_index.py --max-queries 220 --delay 1.5
   python3 scripts/build_explore_index.py --self-test
 
-No fuzzy / guessed titles are accepted. A match must have the original exact
-bundle ID or a declared numeric App Store track ID. Descriptions such as
-"لعبة مدفوعة في المتجر الرسمي" only PRIORITIZE lookup; paid status still
-requires a real Apple price > 0 in the country checked.
+No guessed Apple matches: only exact bundle or declared store ID is trusted.
+All other entries stay visible under their publisher-defined IPA-AR category.
+Paid status still requires an official Apple price > 0.
 """
 from __future__ import annotations
 
@@ -65,12 +64,25 @@ CATEGORIES = [
      "appleGenreIds": ["6017"], "type": "genre", "glow": "#6FBFDF"},
     {"id": "music", "nameAr": "موسيقى وصوتيات", "nameEn": "Music", "symbol": "music.note",
      "appleGenreIds": ["6011"], "type": "genre", "glow": "#D47DD7"},
+    {"id": "games", "nameAr": "ألعاب متنوعة", "nameEn": "Other Games", "symbol": "gamecontroller.fill",
+     "appleGenreIds": [], "type": "source", "glow": "#68AAEF"},
+    {"id": "learning-ai", "nameAr": "دراسة وذكاء اصطناعي", "nameEn": "Learning & AI", "symbol": "brain.head.profile",
+     "appleGenreIds": [], "type": "source", "glow": "#82B4E4"},
+    {"id": "other", "nameAr": "تطبيقات أخرى", "nameEn": "Other Apps", "symbol": "square.grid.3x3.fill",
+     "appleGenreIds": [], "type": "source", "glow": "#8896BC"},
 ]
 HEADERS = {"User-Agent": "TurathExploreIndexer/1.0", "Accept": "application/json"}
 HINT = re.compile(r"(?:لعبة\s*مدفوعة|مدفوع[ة]?\s*في\s*المتجر|paid\s+game|paid\s+(?:on\s+)?app\s*store)", re.I)
 SOCIAL_HINT = re.compile(r"(?:تواصل|اجتماعي|اجتماعية|social|network|chat|telegram|instagram|whatsapp|snapchat|tiktok|facebook|messenger|discord|threads|twitter|reddit|wechat|signal|viber|line\b)", re.I)
 ID_KEYS = ("appStoreId", "appstoreId", "itunesId", "trackId")
 BUNDLE_KEYS = ("originalBundleIdentifier", "originalBundleId", "bundleIdentifier", "bundleId")
+SOURCE_FALLBACK = {
+    "ترفيه": "entertainment", "تواصل": "social", "أدوات": "utilities",
+    "دراسة وذكاء اصطناعي": "learning-ai", "ألعاب": "games", "أخرى": "other",
+}
+# Respect explicitly selected publisher categories even when Apple reports
+# a broad/secondary photo, music or utilities genre for that same app.
+SOURCE_PRIMARY_OVERRIDE = {"ترفيه": "entertainment", "تواصل": "social"}
 
 
 def utc_now():
@@ -247,6 +259,18 @@ def memberships(match):
                 return [cat["id"]]
     return []
 
+def source_membership(entry, apple):
+    """Classify by verified Apple data, or the publisher's IPA-AR category."""
+    primary = str(entry.get("category") or "").strip()
+    if primary in SOURCE_PRIMARY_OVERRIDE:
+        return SOURCE_PRIMARY_OVERRIDE[primary]
+    verified = memberships(apple)
+    if verified:
+        return verified[0]
+    # Never guess a game subgenre or paid status for an unverified app.
+    return SOURCE_FALLBACK.get(primary, "other")
+
+
 def normalize_entries(root):
     rows = root.get("apps")
     if not isinstance(rows, list):
@@ -260,7 +284,8 @@ def normalize_entries(root):
         if not key or key in seen:
             continue
         seen.add(key)
-        if eligible(entry):
+        if (nonempty_string(entry.get("name")) and
+                (nonempty_string(entry.get("fileType")) or "").lower() not in ("dylib", "deb", "zip")):
             result.append((key, entry))
     return result, len(seen)
 
@@ -269,12 +294,14 @@ def build(source, old, budget, lookup_fn=lookup, now=None, min_delay=1.5):
     now = now or utc_now()
     selected, source_count = normalize_entries(source)
     previous = old.get("matches") or {}
-    all_keys = {key for key, _ in selected}
+    eligible_keys = {key for key, entry in selected if eligible(entry)}
     matches = {k: v for k, v in previous.items()
-               if k in all_keys and isinstance(v, dict)}
+               if k in eligible_keys and isinstance(v, dict)}
 
     outstanding = []
     for key, entry in selected:
+        if key not in eligible_keys:
+            continue
         cached = matches.get(key)
         bundle = original_bundle(entry)
         track = store_track_id(entry)
@@ -321,13 +348,20 @@ def build(source, old, budget, lookup_fn=lookup, now=None, min_delay=1.5):
 
     category_apps = {cat["id"]: [] for cat in CATEGORIES}
     verified = 0
-    for key, _ in selected:
-        entry = matches.get(key) or {}
-        if entry.get("status") != "matched":
-            continue
-        verified += 1
-        for cat_id in memberships(entry.get("apple")):
-            category_apps[cat_id].append(key)
+    fallback_count = 0
+    source_override_count = 0
+    for key, entry in selected:
+        record = matches.get(key) or {}
+        apple = record.get("apple") if record.get("status") == "matched" else None
+        if apple:
+            verified += 1
+        category_id = source_membership(entry, apple)
+        apple_membership = memberships(apple)
+        if not apple_membership:
+            fallback_count += 1
+        elif category_id not in apple_membership:
+            source_override_count += 1
+        category_apps[category_id].append(key)
 
     assert sum(map(len, category_apps.values())) == len(set(key for ids in category_apps.values() for key in ids)), "Duplicate app across categories"
     categories = [
@@ -337,9 +371,12 @@ def build(source, old, budget, lookup_fn=lookup, now=None, min_delay=1.5):
     result = {
         "schema": SCHEMA, "source": SOURCE_URL, "country": COUNTRY,
         "generatedAt": stamp(now), "sourceCount": source_count,
-        "eligibleCount": len(selected), "checkedCount": len(matches),
+        "eligibleCount": len(eligible_keys), "checkedCount": len(matches),
         "verifiedCount": verified, "lookupRequests": requests,
         "lookupErrors": errors, "categories": categories,
+        "categorizedCount": sum(map(len, category_apps.values())),
+        "fallbackCount": fallback_count,
+        "sourceOverrideCount": source_override_count,
         "matches": matches,
     }
     return result
@@ -350,19 +387,30 @@ def self_test():
         {"id": "a", "name": "Action 1", "bundleIdentifier": "com.example.a",
          "localizedDescription": "لعبة مدفوعة في المتجر الرسمي"},
         {"id": "b", "name": "Tool", "bundleIdentifier": "com.example.b"},
+        {"id": "c", "name": "Cinema", "category": "ترفيه", "bundleIdentifier": "com.example.c"},
+        {"id": "d", "name": "Offline Game", "category": "ألعاب", "bundleIdentifier": "com.example.d"},
+        {"id": "e", "name": "AI Class", "category": "دراسة وذكاء اصطناعي"},
         {"id": "ignored", "name": "Dylib", "fileType": "dylib",
          "bundleIdentifier": "com.example.x"},
     ]}
     def stub(app):
         if app["id"] == "a":
             return {"genreIds": ["6014", "7001"], "price": 5.0, "country": "us"}
-        return {"genreIds": ["6002"], "price": 0.0, "country": "us"}
+        if app["id"] == "b":
+            return {"genreIds": ["6002"], "price": 0.0, "country": "us"}
+        return None
     value = build(sample, {}, 5, stub, min_delay=0)
     categories = {c["id"]: c for c in value["categories"]}
     assert categories["paid-games"]["appIDs"] == ["a"]
     assert categories["action"]["appIDs"] == []
     assert categories["utilities"]["appIDs"] == ["b"]
     assert categories["sports"]["appIDs"] == []
+    assert categories["entertainment"]["appIDs"] == ["c"]
+    assert categories["games"]["appIDs"] == ["d"]
+    assert categories["learning-ai"]["appIDs"] == ["e"]
+    assert value["categorizedCount"] == 5
+    assert value["fallbackCount"] == 3
+    assert value["eligibleCount"] == 4
     assert categories["paid-apps"]["appIDs"] == []
     assert memberships({"genreIds": ["6005", "6007"], "primaryGenreId": "6005", "price": 0}) == ["social"]
     assert memberships({"genreIds": ["6005", "6007"], "primaryGenreId": "6007", "price": 0}) == ["productivity"]
@@ -374,14 +422,18 @@ def self_test():
     assert memberships({"genreIds": ["6027"], "price": 0}) == ["photo-video"]
     assert memberships({"genreIds": ["6014", "7015"], "price": 0}) == ["simulation"]
     assert memberships({"genreIds": ["6014", "7015"], "price": 3}) == ["paid-games"]
-    assert value["checkedCount"] == 2
-    assert value["sourceCount"] == 3
+    assert value["checkedCount"] == 4
+    assert value["sourceCount"] == 6
     cached = build(sample, value, 5, lambda _: 1 / 0, min_delay=0)
     assert cached["lookupRequests"] == 0
     assert all(c["count"] == categories[c["id"]]["count"] for c in cached["categories"])
     # Notes must NOT cause paid classification if official price is zero.
     assert "paid-games" not in memberships({"genreIds": ["6014"], "price": 0.0})
     assert not memberships({"genreIds": ["6014", "7006"], "price": 5.0})
+    assert source_membership({"category": "ترفيه"}, {"genreIds": ["6008"], "price": 0}) == "entertainment"
+    assert source_membership({"category": "تواصل"}, None) == "social"
+    assert source_membership({"category": "أدوات"}, None) == "utilities"
+    assert source_membership({"category": "ألعاب"}, None) == "games"
     assert social_hint({"name": "Instagram", "category": "Other"})
     assert not social_hint({"name": "Golf Golf", "category": "Arcade"})
     print("All explore classifier regression tests passed")
@@ -415,6 +467,9 @@ def main():
         "verifiedCount": result["verifiedCount"],
         "lookupRequests": result["lookupRequests"],
         "lookupErrors": result["lookupErrors"],
+        "categorizedCount": result["categorizedCount"],
+        "fallbackCount": result["fallbackCount"],
+        "sourceOverrideCount": result["sourceOverrideCount"],
         "categories": {c["id"]: c["count"] for c in result["categories"]},
     }, ensure_ascii=False, indent=2))
 
