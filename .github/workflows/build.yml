@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-15
     permissions:
       contents: read
     steps:
@@ -41,6 +41,18 @@ jobs:
           grep -q 'StoreFavoriteButton(app: app)' StoreReplica/Views/DetailExplore.swift
           grep -q 'showFavorites = true' StoreReplica/Views/SearchUpdatesShop.swift
           grep -q 'StoreLanguage.localized' StoreReplica/Views/IPAHomeSections.swift
+
+      - name: Require iOS 18 SDK for Apple Translation framework
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          SDK_VERSION="$(xcrun --sdk iphoneos --show-sdk-version)"
+          echo "iOS SDK: $SDK_VERSION"
+          SDK_MAJOR="${SDK_VERSION%%.*}"
+          if [ "$SDK_MAJOR" -lt 18 ]; then
+            echo "::error::Native description translation requires the iOS 18 SDK / Xcode 16 or later."
+            exit 1
+          fi
 
       - name: Install XcodeGen
         run: |

@@ -2,7 +2,7 @@ name: TurathReplica
 
 options:
   bundleIdPrefix: com.ikiraplus
-  xcodeVersion: "15.4"
+  xcodeVersion: "16.0"
   projectFormat: xcode15_3
   deploymentTarget:
     iOS: "16.1"
