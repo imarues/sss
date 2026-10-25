@@ -328,19 +328,11 @@ struct AppDetailView: View {
     }
 
     private func notesSection(_ notes: String) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(StoreLanguage.localized(app.isDylibAsset ? "وصف الملف" : "وصف التطبيق"))
-                .font(AppFont.black(20))
-                .foregroundStyle(StoreTheme.textPrimary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            RTLDescriptionText(text: notes, fontSize: 14, lineSpacing: 9)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 18)
-        .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
+        AppNotesTranslationSection(
+            appID: app.id,
+            originalText: notes,
+            heading: app.isDylibAsset ? "وصف الملف" : "وصف التطبيق"
+        )
     }
 
     @ViewBuilder

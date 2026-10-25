@@ -40,11 +40,10 @@ struct RTLDescriptionText: UIViewRepresentable {
             attributes: [
                 .font: font,
                 .foregroundColor: color,
-                .paragraphStyle: paragraph,
-                .writingDirection: [
-                    NSWritingDirection.rightToLeft.rawValue
-                        | NSWritingDirectionFormatType.override.rawValue
-                ]
+                // Preserve natural LTR order for embedded English names,
+                // bundle IDs and technical words within RTL paragraphs.
+                // NSWritingDirectionFormatType.override reversed their glyphs.
+                .paragraphStyle: paragraph
             ]
         )
         view.semanticContentAttribute = .forceRightToLeft
