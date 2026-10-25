@@ -14,10 +14,18 @@ struct AppNotesTranslationSection: View {
 
     @AppStorage("store.language") private var language = "ar"
 
+    // Type erasure is isolated to this one detail section. It prevents Xcode
+    // from trying to infer both iOS 18 and legacy translation view trees at once.
     var body: some View {
-        Group {
-            #if canImport(Translation)
-            if #available(iOS 18.0, *) {
+        sectionContent
+            .padding(.horizontal, 18)
+            .frame(maxWidth: .infinity)
+    }
+
+    private var sectionContent: AnyView {
+        #if canImport(Translation)
+        if #available(iOS 18.0, *) {
+            return AnyView(
                 NativeNotesTranslation(
                     appID: appID,
                     originalText: originalText,
@@ -25,15 +33,10 @@ struct AppNotesTranslationSection: View {
                     englishInterface: language == "en"
                 )
                 .id(appID + "|" + language + "|" + String(originalText.hashValue))
-            } else {
-                olderSystemSection
-            }
-            #else
-            olderSystemSection
-            #endif
+            )
         }
-        .padding(.horizontal, 18)
-        .frame(maxWidth: .infinity)
+        #endif
+        return AnyView(olderSystemSection)
     }
 
     private var olderSystemSection: some View {
