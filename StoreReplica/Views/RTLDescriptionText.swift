@@ -13,7 +13,7 @@ struct RTLDescriptionText: UIViewRepresentable {
     func makeUIView(context: Context) -> IntrinsicRTLTextView {
         let view = IntrinsicRTLTextView()
         view.isEditable = false
-        view.isSelectable = true
+        view.isSelectable = false
         view.isScrollEnabled = false
         view.backgroundColor = .clear
         view.textContainerInset = .zero

@@ -499,10 +499,10 @@ struct StoreFavoriteButton: View {
             favoriteIDs = current.joined(separator: "\n")
         } label: {
             Image(systemName: isFavorite ? "heart.fill" : "heart")
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(Color.red.opacity(isFavorite ? 1 : 0.76))
-                .frame(width: 36, height: 36)
-                .background(StoreTheme.surface, in: Circle())
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(Color.red.opacity(isFavorite ? 1 : 0.82))
+                .frame(width: 40, height: 40)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
         .accessibilityLabel(StoreLanguage.localized(isFavorite ? "إزالة من المفضلة" : "إضافة إلى المفضلة"))

@@ -16,9 +16,24 @@ struct AppDetailView: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        ScrollView(showsIndicators: false) {
-            VStack(spacing: 0) {
-                turathHero
+        VStack(spacing: 0) {
+            detailTopBar
+                .padding(.top, 5)
+                .padding(.bottom, 5)
+                .frame(maxWidth: .infinity)
+                .background {
+                    StoreTheme.background
+                        .overlay(alignment: .bottom) {
+                            Rectangle()
+                                .fill(StoreTheme.surfaceBorder.opacity(0.45))
+                                .frame(height: 0.5)
+                        }
+                }
+                .zIndex(1)
+
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 0) {
+                    turathHero
 
                 detailInfo
                     .padding(.top, 8)
@@ -43,7 +58,8 @@ struct AppDetailView: View {
                         .padding(.top, 28)
                 }
 
-                Color.clear.frame(height: 34)
+                    Color.clear.frame(height: 34)
+                }
             }
         }
         .background(StoreTheme.background.ignoresSafeArea())
@@ -104,9 +120,6 @@ struct AppDetailView: View {
             heroBackdrop
 
             VStack(spacing: 0) {
-                detailTopBar
-                    .padding(.top, 7)
-
                 Spacer().frame(height: 23)
 
                 AppIconView(app: app, size: 122)
@@ -197,7 +210,6 @@ struct AppDetailView: View {
                 endRadius: 320
             )
         }
-        .ignoresSafeArea(edges: .top)
     }
 
     private var detailTopBar: some View {

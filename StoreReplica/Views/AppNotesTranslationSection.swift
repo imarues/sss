@@ -120,7 +120,7 @@ struct AppNotesTranslationSection: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .multilineTextAlignment(.leading)
                 .environment(\.layoutDirection, .leftToRight)
-                .textSelection(.enabled)
+                .textSelection(.disabled)
         } else if englishLoading {
             HStack(spacing: 8) {
                 ProgressView()
