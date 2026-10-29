@@ -61,6 +61,8 @@ struct LiveUpdatesView: View {
     @State private var loadingInitial = true
     @State private var refreshing = false
     @State private var errorMessage: String?
+    @State private var syncMessage: String?
+    @State private var syncMessageIsError = false
 
     private let service = KiraPagesUpdatesService.shared
 
@@ -99,17 +101,24 @@ struct LiveUpdatesView: View {
 
     private var titleBlock: some View {
         HStack(alignment: .center, spacing: 12) {
-            ZStack {
-                Circle().fill(StoreTheme.accent.opacity(0.12))
-                if refreshing {
-                    ProgressView().tint(StoreTheme.accent)
-                } else {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                        .font(.system(size: 23, weight: .bold))
-                        .foregroundStyle(StoreTheme.accent)
+            Button {
+                Task { await refresh(force: true, showFeedback: true) }
+            } label: {
+                ZStack {
+                    Circle().fill(StoreTheme.accent.opacity(0.12))
+                    if refreshing {
+                        ProgressView().tint(StoreTheme.accent)
+                    } else {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.system(size: 23, weight: .bold))
+                            .foregroundStyle(StoreTheme.accent)
+                    }
                 }
+                .frame(width: 52, height: 52)
             }
-            .frame(width: 52, height: 52)
+            .buttonStyle(.plain)
+            .disabled(refreshing)
+            .accessibilityLabel("مزامنة أحدث الإضافات والتحديثات")
 
             Spacer()
 
@@ -134,6 +143,14 @@ struct LiveUpdatesView: View {
                 .background(StoreTheme.badgeNew.opacity(0.08))
                 .clipShape(Capsule())
                 .frame(maxWidth: .infinity, alignment: .trailing)
+
+                if let syncMessage {
+                    Text(syncMessage.storeForcedRTL)
+                        .font(AppFont.medium(10.5))
+                        .foregroundStyle(syncMessageIsError ? StoreTheme.badgeUpdated : StoreTheme.badgeNew)
+                        .multilineTextAlignment(.trailing)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
             }
         }
          .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
@@ -400,16 +417,25 @@ struct LiveUpdatesView: View {
         loadingInitial = false
     }
 
-    private func refresh(force: Bool) async {
+    private func refresh(force: Bool, showFeedback: Bool = false) async {
         guard !refreshing else { return }
         refreshing = true
+        if showFeedback { syncMessage = nil }
         defer { refreshing = false }
 
         do {
             let fresh = try await service.refreshIfNeeded(force: force)
             apply(fresh)
             errorMessage = nil
+            if showFeedback {
+                syncMessage = "تم جلب أحدث بيانات IPA-AR"
+                syncMessageIsError = false
+            }
         } catch {
+            if showFeedback {
+                syncMessage = "تعذر جلب آخر التحديثات، البيانات السابقة محفوظة"
+                syncMessageIsError = true
+            }
             if appsByDay.values.allSatisfy({ $0.isEmpty }) {
                 errorMessage = error.localizedDescription
             }

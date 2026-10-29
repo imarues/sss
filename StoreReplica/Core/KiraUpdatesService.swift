@@ -245,6 +245,7 @@ actor KiraPagesUpdatesService {
 
             let primaryData = try await appsData
             let appSource = try JSONDecoder().decode(KiraPagesSource.self, from: primaryData)
+            guard !appSource.apps.isEmpty else { throw StoreAPIError.invalidResponse }
             let secondaryData = await dylibsDataResult
             let dylibSource = secondaryData.flatMap { try? JSONDecoder().decode(KiraPagesSource.self, from: $0) }
 
@@ -311,9 +312,22 @@ actor KiraPagesUpdatesService {
     }
 
     private static func fetchData(from url: URL, force: Bool) async throws -> Data {
-        var request = URLRequest(url: url)
+        // A manual sync must bypass both URLSession and edge caches, not just
+        // the 5-minute in-memory snapshot.
+        var requestURL = url
+        if force, var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            var queryItems = parts.queryItems ?? []
+            queryItems.append(URLQueryItem(name: "_refresh", value: UUID().uuidString))
+            parts.queryItems = queryItems
+            requestURL = parts.url ?? url
+        }
+        var request = URLRequest(url: requestURL)
         request.timeoutInterval = 35
         request.cachePolicy = force ? .reloadIgnoringLocalCacheData : .useProtocolCachePolicy
+        if force {
+            request.setValue("no-cache, no-store, max-age=0", forHTTPHeaderField: "Cache-Control")
+            request.setValue("no-cache", forHTTPHeaderField: "Pragma")
+        }
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("ar-IQ,ar;q=0.9,en;q=0.7", forHTTPHeaderField: "Accept-Language")
         let (data, response) = try await URLSession.shared.data(for: request)
