@@ -10,8 +10,10 @@ private enum DylibChoiceMode {
 
 private struct DylibZipEntry: Identifiable, Hashable {
     let url: URL
+    let pathInArchive: String
     var id: String { url.path }
-    var name: String { url.lastPathComponent }
+    // Display the relative folder as well, so same-named dylibs stay distinct.
+    var name: String { pathInArchive }
 }
 
 private enum ReadyDylibOutcome {
@@ -36,7 +38,6 @@ private final class AppDylibMergeModel: ObservableObject {
     @Published var errorText: String?
 
     private let downloader = DylibAssetDownloader()
-    private let fm = FileManager.default
 
     init(app: StoreApp) {
         self.app = app
@@ -156,17 +157,36 @@ private final class AppDylibMergeModel: ObservableObject {
             completion: { [weak self] result in
                 DispatchQueue.main.async {
                     guard let self else { return }
-                    self.inspectingAsset = false
                     switch result {
                     case .failure(let error):
+                        self.inspectingAsset = false
                         self.errorText = error.localizedDescription
                     case .success(let downloaded):
                         self.assetProgress = 1
-                        do {
-                            let result = try self.process(downloaded, item: item)
-                            completion(result)
-                        } catch {
-                            self.errorText = error.localizedDescription
+                        // ZIP extraction runs off the main queue so large archives
+                        // never freeze the picker while their contents are scanned.
+                        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                            let inspected = Result {
+                                try DylibArchiveInspector.inspect(downloaded, preferredName: item.name)
+                            }
+                            DispatchQueue.main.async {
+                                guard let self else { return }
+                                self.inspectingAsset = false
+                                switch inspected {
+                                case .failure(let error):
+                                    self.errorText = error.localizedDescription
+                                case .success(.direct(let file)):
+                                    self.readyDylib = file
+                                    self.zipEntries = []
+                                    self.selectedZipIDs = []
+                                    completion(.direct)
+                                case .success(.zip(let entries)):
+                                    self.readyDylib = nil
+                                    self.zipEntries = entries
+                                    self.selectedZipIDs = []
+                                    completion(.zip)
+                                }
+                            }
                         }
                     }
                 }
@@ -182,32 +202,71 @@ private final class AppDylibMergeModel: ObservableObject {
         }
     }
 
-    private func process(_ url: URL, item: StoreApp) throws -> ReadyDylibOutcome {
-        if try isZip(url) {
-            let folder = fm.temporaryDirectory
+}
+
+// Prepared archives are inspected away from the UI actor. The download's
+// suggested filename is not trusted: CDNs often return application/octet-stream
+// as asset.bin, but Zip 2.x requires a .zip path to extract it.
+private enum DylibPreparedAsset {
+    case direct(URL)
+    case zip([DylibZipEntry])
+}
+
+private enum DylibArchiveInspector {
+    private static let fm = FileManager.default
+
+    static func inspect(_ source: URL, preferredName: String) throws -> DylibPreparedAsset {
+        let handle = try FileHandle(forReadingFrom: source)
+        let signature = try handle.read(upToCount: 4) ?? Data()
+        try handle.close()
+        let bytes = Array(signature)
+        let isArchive = bytes.count == 4 &&
+            bytes[0] == 0x50 && bytes[1] == 0x4b &&
+            ((bytes[2] == 0x03 && bytes[3] == 0x04) ||
+             (bytes[2] == 0x05 && bytes[3] == 0x06) ||
+             (bytes[2] == 0x07 && bytes[3] == 0x08))
+
+        if isArchive {
+            let workFolder = fm.temporaryDirectory
                 .appendingPathComponent("DylibZip-\(UUID().uuidString)", isDirectory: true)
-            try fm.createDirectory(at: folder, withIntermediateDirectories: true)
-            try Zip.unzipFile(url, destination: folder, overwrite: true, password: nil, progress: nil)
-            let files = recursiveDylibs(in: folder)
-                .map { DylibZipEntry(url: $0) }
-                .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-            guard !files.isEmpty else {
-                throw SideloadSigningError.unsupportedDylib("لا يوجد ملف Dylib صالح داخل الحزمة")
+            let extractedFolder = workFolder.appendingPathComponent("contents", isDirectory: true)
+            try fm.createDirectory(at: extractedFolder, withIntermediateDirectories: true)
+            // Always give Zip a genuine .zip extension, regardless of the
+            // download response's suggested filename or URL query parameters.
+            let archiveURL = workFolder.appendingPathComponent("download.zip")
+            try fm.copyItem(at: source, to: archiveURL)
+            do {
+                try Zip.unzipFile(archiveURL, destination: extractedFolder,
+                                  overwrite: true, password: nil, progress: nil)
+            } catch {
+                throw SideloadSigningError.unsupportedDylib("تعذر فك ضغط ZIP: \(error.localizedDescription)")
             }
-            zipEntries = files
-            selectedZipIDs = []
-            readyDylib = nil
-            return .zip
+
+            guard let enumerator = fm.enumerator(
+                at: extractedFolder,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: []
+            ) else {
+                throw SideloadSigningError.unsupportedDylib("تعذر فحص محتويات ZIP")
+            }
+            var found: [DylibZipEntry] = []
+            for case let file as URL in enumerator where file.pathExtension.lowercased() == "dylib" {
+                guard (try? file.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { continue }
+                let relative = String(file.path.dropFirst(extractedFolder.path.count + 1))
+                found.append(DylibZipEntry(url: file, pathInArchive: relative))
+            }
+            found.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            guard !found.isEmpty else {
+                throw SideloadSigningError.unsupportedDylib("لا يوجد ملف Dylib داخل ZIP أو مجلداته")
+            }
+            return .zip(found)
         }
 
-        readyDylib = try normalizeDylib(url, preferredName: item.name)
-        zipEntries = []
-        selectedZipIDs = []
-        return .direct
-    }
+        if source.pathExtension.lowercased() == "zip" {
+            throw SideloadSigningError.unsupportedDylib("الملف ليس أرشيف ZIP صالح")
+        }
+        if source.pathExtension.lowercased() == "dylib" { return .direct(source) }
 
-    private func normalizeDylib(_ source: URL, preferredName: String) throws -> URL {
-        if source.pathExtension.lowercased() == "dylib" { return source }
         let folder = fm.temporaryDirectory
             .appendingPathComponent("ReadyDylib-\(UUID().uuidString)", isDirectory: true)
         try fm.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -216,27 +275,7 @@ private final class AppDylibMergeModel: ObservableObject {
             .replacingOccurrences(of: "\\", with: "_")
         let destination = folder.appendingPathComponent((safe.isEmpty ? "Injected" : safe) + ".dylib")
         try fm.copyItem(at: source, to: destination)
-        return destination
-    }
-
-    private func isZip(_ url: URL) throws -> Bool {
-        let handle = try FileHandle(forReadingFrom: url)
-        defer { try? handle.close() }
-        let data = try handle.read(upToCount: 4) ?? Data()
-        return data.count >= 2 && data[data.startIndex] == 0x50 && data[data.startIndex + 1] == 0x4B
-    }
-
-    private func recursiveDylibs(in folder: URL) -> [URL] {
-        guard let enumerator = fm.enumerator(
-            at: folder,
-            includingPropertiesForKeys: [.isRegularFileKey],
-            options: [.skipsHiddenFiles]
-        ) else { return [] }
-        var result: [URL] = []
-        for case let url as URL in enumerator where url.pathExtension.lowercased() == "dylib" {
-            result.append(url)
-        }
-        return result
+        return .direct(destination)
     }
 }
 
@@ -327,7 +366,6 @@ struct AppDylibMergeSheet: View {
     @ObservedObject private var center = DetailPreparationCenter.shared
     @State private var pickingLocal = false
     @State private var showReadyPicker = false
-    @State private var showZipPicker = false
 
     private let accent = Color(red: 0.04, green: 0.65, blue: 0.59)
 
@@ -420,22 +458,8 @@ struct AppDylibMergeSheet: View {
             .ignoresSafeArea()
         }
         .sheet(isPresented: $showReadyPicker) {
-            ReadyDylibPickerSheet(
-                model: model,
-                accent: accent,
-                onZipReady: {
-                    showReadyPicker = false
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.20) {
-                        showZipPicker = true
-                    }
-                }
-            )
-            .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
-        }
-        .sheet(isPresented: $showZipPicker) {
-            ZipDylibPickerSheet(model: model, accent: accent)
-                .presentationDetents([.medium, .large])
+            ReadyDylibPickerSheet(model: model, accent: accent)
+                .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
         }
         .onReceive(NotificationCenter.default.publisher(for: DetailPreparationCenter.completedNotification)) { note in
@@ -614,10 +638,11 @@ struct AppDylibMergeSheet: View {
 private struct ReadyDylibPickerSheet: View {
     @ObservedObject var model: AppDylibMergeModel
     let accent: Color
-    let onZipReady: () -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
+    @State private var showZipPicker = false
+    @State private var zipChoiceConfirmed = false
 
     private var filtered: [StoreApp] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -643,7 +668,7 @@ private struct ReadyDylibPickerSheet: View {
                                     case .direct:
                                         dismiss()
                                     case .zip:
-                                        onZipReady()
+                                        showZipPicker = true
                                     }
                                 }
                             } label: {
@@ -703,6 +728,18 @@ private struct ReadyDylibPickerSheet: View {
             }
             .task { await model.loadCatalogIfNeeded() }
         }
+        .sheet(isPresented: $showZipPicker, onDismiss: {
+            if zipChoiceConfirmed {
+                dismiss()
+            }
+        }) {
+            ZipDylibPickerSheet(model: model, accent: accent) {
+                zipChoiceConfirmed = true
+                showZipPicker = false
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
         .preferredColorScheme(.dark)
         .environment(\.layoutDirection, .leftToRight)
     }
@@ -711,7 +748,7 @@ private struct ReadyDylibPickerSheet: View {
 private struct ZipDylibPickerSheet: View {
     @ObservedObject var model: AppDylibMergeModel
     let accent: Color
-    @Environment(\.dismiss) private var dismiss
+    let onConfirm: () -> Void
 
     var body: some View {
         NavigationStack {
@@ -753,7 +790,7 @@ private struct ZipDylibPickerSheet: View {
                     }
 
                     Button {
-                        dismiss()
+                        onConfirm()
                     } label: {
                         Text("اعتماد الاختيار (\(model.selectedZipIDs.count))")
                             .font(AppFont.black(15))
