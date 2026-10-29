@@ -235,10 +235,22 @@ enum StoreDownloadStorage {
         let tail = Array(try handle.read(upToCount: tailCount) ?? Data())
         guard tail.count >= 22 else { throw StoreDownloadStorageError.truncatedFile }
         // End-of-central-directory, allowing a ZIP comment up to 65535 bytes.
-        let marker = stride(from: tail.count - 22, through: 0, by: -1).first { i in
-            tail[i] == 0x50 && tail[i + 1] == 0x4B &&
-            tail[i + 2] == 0x05 && tail[i + 3] == 0x06 &&
-            i + 22 + Int(tail[i + 20]) + (Int(tail[i + 21]) << 8) <= tail.count
+        var marker: Int?
+        var index = tail.count - 22
+        while index >= 0 {
+            if tail[index] == 0x50 &&
+                tail[index + 1] == 0x4B &&
+                tail[index + 2] == 0x05 &&
+                tail[index + 3] == 0x06 {
+                let commentLow = Int(tail[index + 20])
+                let commentHigh = Int(tail[index + 21]) * 256
+                let commentLength = commentLow + commentHigh
+                if index + 22 + commentLength <= tail.count {
+                    marker = index
+                    break
+                }
+            }
+            index -= 1
         }
         guard let i = marker else { throw StoreDownloadStorageError.truncatedFile }
         func u32(_ j: Int) -> Int64 {
