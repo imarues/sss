@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 import Foundation
 import CoreText
+import ImageIO
 
 struct AppDetailView: View {
     let app: StoreApp
@@ -614,6 +615,27 @@ private struct TurathDetailInstallButton: View {
 
 private struct AppleScreenshotCard: View {
     let url: URL
+    @State private var imageRatio: CGFloat?
+    private var landscape: Bool { (imageRatio ?? 0.59) > 1.0 }
+    private var cardWidth: CGFloat { landscape ? 320 : 230 }
+    private var cardHeight: CGFloat {
+        guard let imageRatio, imageRatio > 0 else { return 390 }
+        return min(410, max(135, cardWidth / imageRatio))
+    }
+
+    private func inspectDimensions() {
+        guard imageRatio == nil else { return }
+        URLSession.shared.dataTask(with: url) { data, _, _ in
+            guard let data, let source = CGImageSourceCreateWithData(data as CFData, nil),
+                  let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+                  let width = properties[kCGImagePropertyPixelWidth] as? NSNumber,
+                  let height = properties[kCGImagePropertyPixelHeight] as? NSNumber,
+                  height.doubleValue > 0 else { return }
+            DispatchQueue.main.async {
+                imageRatio = CGFloat(width.doubleValue / height.doubleValue)
+            }
+        }.resume()
+    }
 
     var body: some View {
         ZStack {
@@ -626,7 +648,13 @@ private struct AppleScreenshotCard: View {
                     image
                         .resizable()
                         .scaledToFit()
-                        .padding(1)
+                        .onAppear {
+                            // SwiftUI Image has its original pixel dimensions.
+                            // Preserve each screenshot's own aspect ratio.
+                            // An independent lightweight URLSession request reads
+                            // the native dimensions without resizing the image.
+                            inspectDimensions()
+                        }
                 case .failure:
                     Image(systemName: "photo")
                         .font(.system(size: 28, weight: .semibold))
@@ -638,11 +666,11 @@ private struct AppleScreenshotCard: View {
                 }
             }
         }
-        .frame(width: 230, height: 390)
+        .frame(width: cardWidth, height: cardHeight)
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(StoreTheme.surfaceBorder.opacity(0.75), lineWidth: 0.8)
+                .stroke(StoreTheme.surfaceBorder.opacity(0.85), lineWidth: 1)
         }
     }
 }

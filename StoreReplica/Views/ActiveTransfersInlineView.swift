@@ -1,3 +1,77 @@
+// Controls are displayed only while bytes are actively downloading. ZIP
+// rewriting and code signing are not safely suspendable.
+enum DownloadControlTarget {
+    case app(String)
+    case direct(String)
+    case detail
+}
+
+struct DownloadControlBar: View {
+    let target: DownloadControlTarget
+    @ObservedObject private var installer = StoreInstallCoordinator.shared
+    @ObservedObject private var transfers = TransferActivityCenter.shared
+    @ObservedObject private var detail = DetailPreparationCenter.shared
+
+    private var available: Bool {
+        switch target {
+        case .app(let id): return installer.isDownloadActive(appID: id)
+        case .direct(let id): return transfers.directOperations[id] != nil
+        case .detail: return detail.isDownloading
+        }
+    }
+
+    private var paused: Bool {
+        switch target {
+        case .app(let id): return installer.pausedAppIDs.contains(id)
+        case .direct(let id): return transfers.pausedDirectIDs.contains(id)
+        case .detail: return detail.isPaused
+        }
+    }
+
+    private func toggle() {
+        switch target {
+        case .app(let id): installer.toggleDownloadPause(appID: id)
+        case .direct(let id): transfers.toggleDirectPause(id: id)
+        case .detail: detail.togglePause()
+        }
+    }
+
+    private func cancel() {
+        switch target {
+        case .app(let id): installer.cancelDownload(appID: id)
+        case .direct(let id): transfers.cancelDirectDownload(id: id)
+        case .detail: detail.cancelActiveDownload()
+        }
+    }
+
+    var body: some View {
+        if available {
+            HStack(spacing: 10) {
+                Button(action: toggle) {
+                    Label(paused ? "استكمال" : "إيقاف مؤقت",
+                          systemImage: paused ? "play.fill" : "pause.fill")
+                        .font(AppFont.bold(11))
+                        .foregroundStyle(StoreTheme.accent)
+                        .padding(.horizontal, 12)
+                        .frame(height: 33)
+                        .background(StoreTheme.field, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                Spacer(minLength: 0)
+                Button(role: .destructive, action: cancel) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.red)
+                        .frame(width: 42, height: 33)
+                        .background(Color.red.opacity(0.10), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("إلغاء التحميل وحذف العملية")
+            }
+        }
+    }
+}
+
 import SwiftUI
 
 struct ActiveTransfersInlineView: View {
@@ -26,7 +100,7 @@ struct ActiveTransfersInlineView: View {
                         .foregroundStyle(StoreTheme.textPrimary)
                     Circle().fill(Color.red).frame(width: 8, height: 8)
                 }
-                .frame(maxWidth: .infinity, alignment: .trailing)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 ForEach(transfers.activeDirectOperations) { operation in
                     transferRow(
@@ -34,7 +108,8 @@ struct ActiveTransfersInlineView: View {
                         kind: operation.app.isDylibAsset ? "تحميل ديلب" : "تحميل التطبيق",
                         progress: operation.progress,
                         status: operation.statusText,
-                        accent: operation.app.isDylibAsset ? DownloadAssetTheme.gold : StoreTheme.accent
+                        accent: operation.app.isDylibAsset ? DownloadAssetTheme.gold : StoreTheme.accent,
+                        controls: .direct(operation.id)
                     )
                 }
 
@@ -47,7 +122,8 @@ struct ActiveTransfersInlineView: View {
                             status: detailCenter.statusText.isEmpty ? "جاري التجهيز" : detailCenter.statusText,
                             accent: detailCenter.activeKind == .duplicate ? StoreTheme.accent : Color(red: 0.04, green: 0.65, blue: 0.59),
                             bundleOverride: detailCenter.activeTargetBundleID,
-                            versionOverride: detailCenter.activeVersion
+                            versionOverride: detailCenter.activeVersion,
+                            controls: .detail
                         )
                     } else {
                         genericDetailRow
@@ -60,7 +136,8 @@ struct ActiveTransfersInlineView: View {
                         kind: installKind(operation.state.phase),
                         progress: normalizedInstallProgress(operation.state),
                         status: operation.state.message ?? installKind(operation.state.phase),
-                        accent: StoreTheme.accent
+                        accent: StoreTheme.accent,
+                        controls: .app(operation.app.id)
                     )
                 }
             }
@@ -75,7 +152,8 @@ struct ActiveTransfersInlineView: View {
         status: String,
         accent: Color,
         bundleOverride: String? = nil,
-        versionOverride: String? = nil
+        versionOverride: String? = nil,
+        controls: DownloadControlTarget? = nil
     ) -> some View {
         let value = max(0, min(1, progress))
         let bundle = bundleOverride ?? app.bundleId ?? app.id
@@ -135,6 +213,7 @@ struct ActiveTransfersInlineView: View {
             }
             .frame(height: 8)
              .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
+            if let controls { DownloadControlBar(target: controls) }
         }
         .padding(13)
         .background(StoreTheme.surface)

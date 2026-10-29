@@ -75,6 +75,8 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
     static let shared = StoreInstallCoordinator()
 
     @Published private(set) var states: [String: StoreInstallState] = [:]
+    @Published private(set) var pausedAppIDs: Set<String> = []
+    @Published private(set) var downloadingAppIDs: Set<String> = []
     var backgroundSessionCompletion: (() -> Void)?
 
     private let lock = NSLock()
@@ -224,6 +226,43 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
         beginDownload(job)
     }
 
+    func isDownloadActive(appID: String) -> Bool { downloadingAppIDs.contains(appID) }
+
+    func toggleDownloadPause(appID: String) {
+        guard downloadingAppIDs.contains(appID),
+              let current = snapshotJobs().values.first(where: { $0.appID == appID }) else { return }
+        session.getAllTasks { [weak self] tasks in
+            guard let self, let task = tasks.first(where: { $0.taskDescription == current.id && $0 is URLSessionDownloadTask }) else { return }
+            DispatchQueue.main.async {
+                let old = self.state(for: appID)
+                if self.pausedAppIDs.contains(appID) {
+                    task.resume()
+                    self.pausedAppIDs.remove(appID)
+                    self.publish(appID: appID, state: StoreInstallState(phase: .downloading, progress: old.progress, message: "جاري التحميل"))
+                } else {
+                    task.suspend()
+                    self.pausedAppIDs.insert(appID)
+                    self.publish(appID: appID, state: StoreInstallState(phase: .downloading, progress: old.progress, message: "التحميل متوقف مؤقتاً"))
+                }
+            }
+        }
+    }
+
+    func cancelDownload(appID: String) {
+        guard downloadingAppIDs.contains(appID),
+              let current = snapshotJobs().values.first(where: { $0.appID == appID }) else { return }
+        removeJob(current.id) // late callbacks can no longer re-create this job
+        DispatchQueue.main.async {
+            self.pausedAppIDs.remove(appID)
+            self.downloadingAppIDs.remove(appID)
+            self.states[appID] = StoreInstallState()
+        }
+        InstallLiveActivityBridge.finish(job: current, success: false, detail: "تم إلغاء التحميل")
+        session.getAllTasks { tasks in
+            tasks.filter { $0.taskDescription == current.id }.forEach { $0.cancel() }
+        }
+    }
+
     func applicationDidBecomeActive() {
         StoreInstallKeepAlive.shared.reaffirm()
 
@@ -269,6 +308,10 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
 
         let task = session.downloadTask(with: request)
         task.taskDescription = job.id
+        DispatchQueue.main.async {
+            self.downloadingAppIDs.insert(job.appID)
+            self.pausedAppIDs.remove(job.appID)
+        }
         task.resume()
     }
 
@@ -304,6 +347,10 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
 
     private func handleFinishedDownload(_ temporaryURL: URL, jobID: String) {
         guard let job = job(jobID) else { return }
+        DispatchQueue.main.async {
+            self.downloadingAppIDs.remove(job.appID)
+            self.pausedAppIDs.remove(job.appID)
+        }
 
         // BatSign treats transfer + unpacking as one progress journey. Do not
         // park the UI at a fake final 100% before the package has been adopted.
@@ -817,12 +864,19 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
 
     private func removeJob(_ id: String) {
         lock.lock()
+        let appID = jobs[id]?.appID
         jobs[id] = nil
         samples[id] = nil
         rescueAttempts[id] = nil
         persistJobsLocked()
         lock.unlock()
         endDownloadHold(id)
+        if let appID {
+            DispatchQueue.main.async {
+                self.pausedAppIDs.remove(appID)
+                self.downloadingAppIDs.remove(appID)
+            }
+        }
     }
 
     private func job(_ id: String) -> StoreInstallJob? {
@@ -856,6 +910,7 @@ extension StoreInstallCoordinator: URLSessionDownloadDelegate, URLSessionDelegat
             ? min(0.63, max(0, Double(totalBytesWritten) / Double(expected) * 0.63))
             : 0
 
+        if pausedAppIDs.contains(job.appID) { return }
         let now = Date()
         var speed: Double = 0
         lock.lock()

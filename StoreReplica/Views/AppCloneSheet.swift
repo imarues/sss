@@ -4,6 +4,10 @@ struct AppCloneSheet: View {
     let app: StoreApp
 
     @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var preparation = DetailPreparationCenter.shared
+    @ObservedObject private var installer = StoreInstallCoordinator.shared
+    @State private var operationStarted = false
+    @State private var preparedClone: StoreApp?
     @State private var selectedNumber = 1
     @State private var useCustom = false
     @State private var customText = "15"
@@ -47,6 +51,26 @@ struct AppCloneSheet: View {
         )
     }
 
+    private var cloning: Bool {
+        operationStarted && preparation.isActive(appID: app.id, kind: .duplicate)
+    }
+
+    private var signingState: StoreInstallState? {
+        guard let preparedClone else { return nil }
+        return installer.state(for: preparedClone)
+    }
+
+    private var operationProgress: Double {
+        if cloning { return preparation.progress }
+        return signingState?.progress ?? (preparedClone == nil ? 0 : 1)
+    }
+
+    private var operationStatus: String {
+        if cloning { return preparation.statusText.isEmpty ? "جاري تجهيز النسخة" : preparation.statusText }
+        if let signingState { return signingState.message ?? "جاهز للتثبيت" }
+        return preparation.errorText ?? "جاري بدء العملية"
+    }
+
     var body: some View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 20) {
@@ -54,6 +78,31 @@ struct AppCloneSheet: View {
                 header
                 intro
                 numberCard
+
+                if operationStarted {
+                    VStack(spacing: 11) {
+                        HStack(spacing: 12) {
+                            Text("\(Int(min(1, max(0, operationProgress)) * 100))%")
+                                .font(AppFont.black(20))
+                                .foregroundStyle(StoreTheme.accent)
+                            Spacer()
+                            Text(operationStatus)
+                                .font(AppFont.medium(12))
+                                .foregroundStyle(StoreTheme.textPrimary)
+                                .lineLimit(2)
+                        }
+                        ProgressView(value: max(0, min(1, operationProgress)))
+                            .tint(StoreTheme.accent)
+                        if preparedClone != nil {
+                            Text("تم تجهيز النسخة المكررة، يمكنك متابعة التثبيت.")
+                                .font(AppFont.regular(11))
+                                .foregroundStyle(StoreTheme.badgeNew)
+                        }
+                    }
+                    .padding(16)
+                    .background(StoreTheme.surface)
+                    .clipShape(RoundedRectangle(cornerRadius: 18))
+                }
 
                 Button(action: startDuplicate) {
                     HStack(spacing: 10) {
@@ -66,33 +115,32 @@ struct AppCloneSheet: View {
                     .clipShape(RoundedRectangle(cornerRadius: 25, style: .continuous))
                 }
                 .buttonStyle(.plain)
-                .disabled(!customIsValid)
-                .opacity(customIsValid ? 1 : 0.62)
+                .disabled(!customIsValid || operationStarted)
+                .opacity(customIsValid && !operationStarted ? 1 : 0.62)
 
-                Text("يتم تنزيل IPA بالطريقة الطبيعية أولاً، ثم يغيّر BatSign الباندل أثناء نفس مرحلة التوقيع. لا يتم تعديل ملف التحميل المؤقت.")
-                    .font(AppFont.regular(11.5)).foregroundStyle(StoreTheme.textSecondary)
-                    .multilineTextAlignment(.center).lineSpacing(5).padding(.horizontal, 20)
-
-                Button("إلغاء") { dismiss() }
+                Button(operationStarted ? "إغلاق" : "إلغاء") { dismiss() }
                     .font(AppFont.bold(14)).foregroundStyle(StoreTheme.textSecondary).padding(.top, 2)
                 Color.clear.frame(height: 24)
             }
             .padding(.horizontal, 18).padding(.top, 8)
         }
         .background(StoreTheme.background.ignoresSafeArea())
-        
-         .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
+        .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
+        .onReceive(NotificationCenter.default.publisher(for: DetailPreparationCenter.completedNotification)) { note in
+            guard operationStarted,
+                  note.userInfo?["appID"] as? String == app.id,
+                  note.userInfo?["kind"] as? String == DetailPreparationKind.duplicate.rawValue else { return }
+            preparedClone = note.userInfo?["preparedApp"] as? StoreApp
+        }
     }
 
     private func startDuplicate() {
         guard customIsValid else { return }
         let number = effectiveNumber
-        dismiss()
-
-        // Use the durable original-IPA preparation flow shared with injection.
-        // The prepared clone is staged before signing, and an existing valid
-        // certificate is reused instead of asking for it on every duplicate.
-        DetailPreparationCenter.shared.beginDuplicate(app: app, number: number)
+        operationStarted = true
+        preparedClone = nil
+        // Stay on this sheet through downloading, rewriting, signing and handoff.
+        preparation.beginDuplicate(app: app, number: number)
     }
 
     private var header: some View {
@@ -170,13 +218,11 @@ struct AppCloneSheet: View {
 
             VStack(alignment: .trailing, spacing: 9) {
                 Text("معرّف النسخة الجديدة").font(AppFont.bold(12.5)).foregroundStyle(StoreTheme.textSecondary).frame(maxWidth: .infinity, alignment: .trailing)
-                HStack(spacing: 0) {
-                    Text(bundleBase).foregroundStyle(StoreTheme.textSecondary)
-                    Text("\(effectiveNumber)").foregroundStyle(StoreTheme.accent).fontWeight(.bold)
-                }
-                .font(.system(size: 14, weight: .medium, design: .monospaced))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                 .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
+                (Text(bundleBase).foregroundColor(StoreTheme.textSecondary) +
+                 Text(String(effectiveNumber)).foregroundColor(StoreTheme.accent).bold())
+                    .font(.system(size: 14, weight: .medium, design: .monospaced))
+                    .environment(\.layoutDirection, .leftToRight)
+                    .frame(maxWidth: .infinity, alignment: StoreLanguage.isEnglish ? .leading : .trailing)
             }
 
             HStack(alignment: .top, spacing: 9) {

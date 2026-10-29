@@ -271,8 +271,8 @@ struct VerifiedExploreView: View {
                                 .font(AppFont.black(29))
                                 .foregroundStyle(StoreTheme.textPrimary)
                             Text(StoreLanguage.isEnglish
-                                 ? "IPA-AR categories, enhanced by Apple when available"
-                                 : "تطبيقات IPA-AR بتصنيفاتها الأصلية مع بيانات Apple")
+                                 ? "Browse apps by category"
+                                 : "تصفح التطبيقات حسب الفئة")
                                 .font(AppFont.regular(12))
                                 .foregroundStyle(StoreTheme.textSecondary)
                                 .multilineTextAlignment(.trailing)
@@ -285,23 +285,6 @@ struct VerifiedExploreView: View {
                             .background(StoreTheme.accent.opacity(0.13), in: RoundedRectangle(cornerRadius: 16))
                     }
                     .padding(.horizontal, StoreTheme.pageHorizontal)
-
-                    if model.ipaCount > 0 {
-                        HStack(spacing: 8) {
-                            Text(StoreLanguage.isEnglish
-                                 ? "\(model.checkedCount) verified/checked of \(model.eligibleCount) eligible apps"
-                                 : "تم فحص \(model.checkedCount) من \(model.eligibleCount) تطبيق قابل للمطابقة")
-                                .font(AppFont.medium(11))
-                                .foregroundStyle(StoreTheme.textSecondary)
-                            Spacer()
-                            Image(systemName: "checkmark.shield")
-                                .foregroundStyle(StoreTheme.accent)
-                            Text(StoreLanguage.isEnglish ? "IPA-AR + Apple" : "IPA-AR + Apple")
-                                .font(AppFont.medium(11))
-                                .foregroundStyle(StoreTheme.textSecondary)
-                        }
-                        .padding(.horizontal, StoreTheme.pageHorizontal)
-                    }
 
                     if model.usedOfflineCache {
                         Label(
@@ -335,8 +318,8 @@ struct VerifiedExploreView: View {
                         VStack(spacing: 13) {
                             ProgressView().tint(StoreTheme.accent)
                             Text(StoreLanguage.isEnglish
-                                 ? "Matching published apps with Apple categories…"
-                                 : "جاري مطابقة التطبيقات المنشورة مع تصنيفات Apple…")
+                                 ? "Loading categories…"
+                                 : "جاري تحميل التصنيفات…")
                                 .font(AppFont.medium(12))
                                 .foregroundStyle(StoreTheme.textSecondary)
                         }
@@ -348,8 +331,8 @@ struct VerifiedExploreView: View {
                                 .font(.system(size: 32))
                                 .foregroundStyle(StoreTheme.accent)
                             Text(model.error ?? (StoreLanguage.isEnglish
-                                  ? "No verified categories available"
-                                  : "لا توجد تصنيفات مؤكدة حالياً"))
+                                  ? "No categories available"
+                                  : "لا توجد تصنيفات متاحة حالياً"))
                                 .font(AppFont.medium(13))
                                 .foregroundStyle(StoreTheme.textSecondary)
                                 .multilineTextAlignment(.center)
@@ -370,18 +353,7 @@ struct VerifiedExploreView: View {
                         .padding(.vertical, 54)
                     }
 
-                    if !model.sections.isEmpty {
-                        HStack(spacing: 7) {
-                            Image(systemName: "info.circle")
-                            Text(StoreLanguage.isEnglish
-                                 ? "IPA-AR apps remain visible without Apple matches. Paid groups require verified App Store prices."
-                                 : "التصنيفات تشمل تطبيقات IPA-AR حتى لو ما تطابقت مع Apple؛ الأقسام المدفوعة تتطلب سعراً رسمياً في App Store.")
-                        }
-                        .font(AppFont.regular(10.5))
-                        .foregroundStyle(StoreTheme.textSecondary)
-                        .frame(maxWidth: .infinity, alignment: .trailing)
-                        .padding(.horizontal, StoreTheme.pageHorizontal)
-                    }
+
                 }
                 .padding(.bottom, 22)
             }

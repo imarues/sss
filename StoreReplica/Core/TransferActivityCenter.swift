@@ -42,6 +42,7 @@ final class TransferActivityCenter: NSObject, ObservableObject {
 
     @Published private(set) var trackedApps: [String: StoreApp] = [:]
     @Published private(set) var directOperations: [String: DirectTransferOperation] = [:]
+    @Published private(set) var pausedDirectIDs: Set<String> = []
 
     var backgroundSessionCompletion: (() -> Void)?
 
@@ -211,6 +212,38 @@ final class TransferActivityCenter: NSObject, ObservableObject {
                 task.taskDescription = id
                 task.resume()
             }
+        }
+    }
+
+    func toggleDirectPause(id: String) {
+        guard snapshotDirectRecords()[id] != nil else { return }
+        session.getAllTasks { [weak self] tasks in
+            guard let self, let task = tasks.first(where: { $0.taskDescription == id }) else { return }
+            DispatchQueue.main.async {
+                if self.pausedDirectIDs.contains(id) {
+                    task.resume()
+                    self.pausedDirectIDs.remove(id)
+                } else {
+                    task.suspend()
+                    self.pausedDirectIDs.insert(id)
+                }
+                if var item = self.directOperations[id] {
+                    item.statusText = self.pausedDirectIDs.contains(id) ? "التحميل متوقف مؤقتاً" : "جاري تحميل الديلب"
+                    self.directOperations[id] = item
+                }
+            }
+        }
+    }
+
+    func cancelDirectDownload(id: String) {
+        guard snapshotDirectRecords()[id] != nil else { return }
+        removeDirectRecord(id)
+        DispatchQueue.main.async {
+            self.pausedDirectIDs.remove(id)
+            self.directOperations[id] = nil
+        }
+        session.getAllTasks { tasks in
+            tasks.filter { $0.taskDescription == id }.forEach { $0.cancel() }
         }
     }
 
@@ -391,7 +424,9 @@ extension TransferActivityCenter: URLSessionDownloadDelegate, URLSessionDelegate
             operation.writtenBytes = totalBytesWritten
             operation.expectedBytes = expected
             operation.progress = expected > 0 ? min(0.99, Double(totalBytesWritten) / Double(expected)) : operation.progress
-            operation.statusText = "جاري تحميل الديلب"
+            if !self.pausedDirectIDs.contains(id) {
+                operation.statusText = "جاري تحميل الديلب"
+            }
             self.directOperations[id] = operation
         }
     }
@@ -408,6 +443,7 @@ extension TransferActivityCenter: URLSessionDownloadDelegate, URLSessionDelegate
             try saveFinishedDirectDownload(location: location, response: downloadTask.response, record: record)
             removeDirectRecord(id)
             DispatchQueue.main.async {
+                self.pausedDirectIDs.remove(id)
                 guard var operation = self.directOperations[id] else { return }
                 operation.progress = 1
                 operation.statusText = "تم التحميل"

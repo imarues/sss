@@ -27,6 +27,8 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
     @Published private(set) var activeAppID: String?
     @Published private(set) var activeKind: DetailPreparationKind?
     @Published private(set) var busy = false
+    @Published private(set) var isPaused = false
+    @Published private(set) var isDownloading = false
     @Published private(set) var progress: Double = 0
     @Published private(set) var statusText = ""
     @Published private(set) var errorText: String?
@@ -101,6 +103,7 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
             self.activeAppID = current.app.id
             self.activeKind = current.kind
             self.busy = true
+            self.isDownloading = true
             self.statusText = "جاري استكمال العملية"
         }
         InstallLiveActivityBridge.begin(job: liveJob(for: current))
@@ -133,6 +136,51 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
 
     func isActive(appID: String, kind: DetailPreparationKind) -> Bool {
         activeAppID == appID && activeKind == kind && busy
+    }
+
+    func togglePause() {
+        guard isDownloading, let current = snapshotRecord() else { return }
+        lock.lock()
+        let streaming = rescueTasks[current.id]
+        lock.unlock()
+        if let streaming {
+            if isPaused { streaming.resume() } else { streaming.suspend() }
+            isPaused.toggle()
+            statusText = isPaused ? "التحميل متوقف مؤقتاً" : "جاري استكمال التحميل"
+            return
+        }
+        session.getAllTasks { [weak self] tasks in
+            guard let self, let task = tasks.first(where: { $0.taskDescription == current.id }) else { return }
+            DispatchQueue.main.async {
+                if self.isPaused { task.resume() } else { task.suspend() }
+                self.isPaused.toggle()
+                self.statusText = self.isPaused ? "التحميل متوقف مؤقتاً" : "جاري استكمال التحميل"
+            }
+        }
+    }
+
+    func cancelActiveDownload() {
+        guard isDownloading, let current = snapshotRecord() else { return }
+        lock.lock()
+        let streaming = rescueTasks.removeValue(forKey: current.id)
+        let partial = rescueFiles.removeValue(forKey: current.id)
+        lock.unlock()
+        clearRecord()
+        busy = false
+        isDownloading = false
+        isPaused = false
+        statusText = ""
+        progress = 0
+        streaming?.cancel()
+        try? partial?.1.close()
+        if let partial { try? fm.removeItem(at: partial.0) }
+        session.getAllTasks { tasks in
+            tasks.filter { $0.taskDescription == current.id }.forEach { $0.cancel() }
+        }
+        StoreInstallKeepAlive.shared.end("detail-download-\(current.id)")
+        InstallLiveActivityBridge.finish(job: liveJob(for: current), success: false, detail: "تم إلغاء التحميل")
+        clearRecordFiles(current)
+        finishBackgroundEventsIfPossible()
     }
 
     func beginDuplicate(app: StoreApp, number: Int) {
@@ -173,6 +221,8 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
                 self.activeAppID = app.id
                 self.activeKind = kind
                 self.busy = true
+                self.isDownloading = true
+                self.isPaused = false
                 self.progress = 0
                 self.statusText = "جاري تحميل التطبيق الأصلي"
                 self.errorText = nil
@@ -343,6 +393,10 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
     }
 
     private func prepare(record: DetailPreparationRecord, sourceIPA: URL) {
+        DispatchQueue.main.async {
+            self.isDownloading = false
+            self.isPaused = false
+        }
         lock.lock()
         if preparingRecordID == record.id {
             lock.unlock()
@@ -414,7 +468,7 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
                     NotificationCenter.default.post(
                         name: Self.completedNotification,
                         object: nil,
-                        userInfo: ["appID": record.app.id, "kind": record.kind.rawValue]
+                        userInfo: ["appID": record.app.id, "kind": record.kind.rawValue, "preparedApp": displayedApp]
                     )
 
                     self.clearRecordFiles(record)
@@ -470,6 +524,8 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
         DispatchQueue.main.async {
             guard self.record(id: record.id) != nil else { return }
             self.busy = false
+            self.isDownloading = false
+            self.isPaused = false
             self.progress = 0
             self.statusText = ""
             self.errorText = text
@@ -593,6 +649,7 @@ final class DetailPreparationCenter: NSObject, ObservableObject {
             self.activeAppID = saved.app.id
             self.activeKind = saved.kind
             self.busy = true
+            self.isDownloading = true
             self.statusText = "جاري استكمال العملية"
         }
     }

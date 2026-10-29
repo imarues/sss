@@ -63,6 +63,16 @@ struct DownloadsCenterView: View {
 
     private var header: some View {
         HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("تنزيلاتي")
+                    .font(AppFont.black(27))
+                    .foregroundStyle(StoreTheme.textPrimary)
+                Text(activeCount > 0 ? "تابع كل عمليات التحميل والتجهيز من مكان واحد" : "التطبيقات وملفات الديلب المحمّلة")
+                    .font(AppFont.regular(11.5))
+                    .foregroundStyle(StoreTheme.textSecondary)
+                    .multilineTextAlignment(.leading)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
             if activeCount > 0 {
                 Text("\(activeCount)")
                     .font(AppFont.black(12))
@@ -71,32 +81,20 @@ struct DownloadsCenterView: View {
                     .background(Color.red)
                     .clipShape(Capsule())
             }
-
-            Spacer()
-
-            VStack(alignment: .trailing, spacing: 4) {
-                Text("تنزيلاتي")
-                    .font(AppFont.black(27))
-                    .foregroundStyle(StoreTheme.textPrimary)
-                Text(activeCount > 0 ? "تابع كل عمليات التحميل والتجهيز من مكان واحد" : "التطبيقات وملفات الديلب المحمّلة")
-                    .font(AppFont.regular(11.5))
-                    .foregroundStyle(StoreTheme.textSecondary)
-                    .multilineTextAlignment(.trailing)
-            }
         }
     }
 
     private var activeSection: some View {
         VStack(alignment: .trailing, spacing: 11) {
             HStack(spacing: 7) {
-                Circle()
-                    .fill(Color.red)
-                    .frame(width: 8, height: 8)
                 Text("العمليات الجارية")
                     .font(AppFont.black(18))
                     .foregroundStyle(StoreTheme.textPrimary)
+                Circle()
+                    .fill(Color.red)
+                    .frame(width: 8, height: 8)
             }
-            .frame(maxWidth: .infinity, alignment: .trailing)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             ForEach(transfers.activeDirectOperations) { operation in
                 activeRow(
@@ -105,7 +103,8 @@ struct DownloadsCenterView: View {
                     progress: operation.progress,
                     status: operation.statusText,
                     accent: DownloadAssetTheme.gold,
-                    bytesText: bytesText(written: operation.writtenBytes, expected: operation.expectedBytes)
+                    bytesText: bytesText(written: operation.writtenBytes, expected: operation.expectedBytes),
+                    controls: .direct(operation.id)
                 )
             }
 
@@ -116,7 +115,8 @@ struct DownloadsCenterView: View {
                     progress: detailCenter.progress,
                     status: detailCenter.statusText.isEmpty ? "جاري التجهيز" : detailCenter.statusText,
                     accent: detailCenter.activeKind == .duplicate ? StoreTheme.accent : Color(red: 0.04, green: 0.65, blue: 0.59),
-                    bytesText: nil
+                    bytesText: nil,
+                    controls: .detail
                 )
             }
 
@@ -127,7 +127,8 @@ struct DownloadsCenterView: View {
                     progress: normalizedInstallProgress(operation.state),
                     status: operation.state.message ?? installKind(operation.state.phase),
                     accent: StoreTheme.accent,
-                    bytesText: operation.state.speedText
+                    bytesText: operation.state.speedText,
+                    controls: .app(operation.app.id)
                 )
             }
         }
@@ -139,7 +140,8 @@ struct DownloadsCenterView: View {
         progress: Double,
         status: String,
         accent: Color,
-        bytesText: String?
+        bytesText: String?,
+        controls: DownloadControlTarget? = nil
     ) -> some View {
         VStack(spacing: 12) {
             HStack(spacing: 12) {
@@ -182,6 +184,7 @@ struct DownloadsCenterView: View {
                 }
             }
             .frame(height: 9)
+            if let controls { DownloadControlBar(target: controls) }
         }
         .padding(14)
         .background(StoreTheme.surface)

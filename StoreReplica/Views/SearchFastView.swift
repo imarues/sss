@@ -94,7 +94,7 @@ struct SearchFastView: View {
     @State private var index: [FastSearchEntry] = []
     @State private var results: [StoreApp] = []
     @State private var sourceTags: [String] = []
-    @State private var sourceCount = 0
+    @State private var visibleLimit = 24
     @State private var loading = true
     @State private var searching = false
     @State private var errorText: String?
@@ -147,10 +147,10 @@ struct SearchFastView: View {
                 .foregroundStyle(.white.opacity(0.88))
             Spacer()
             VStack(alignment: .trailing, spacing: 4) {
-                Text("ابحث في كيرا بلس".storeForcedRTL)
+                Text((StoreLanguage.isEnglish ? "Search the store" : "ابحث في التراث بلس").storeForcedRTL)
                     .font(AppFont.black(26))
                     .foregroundStyle(.white)
-                Text("\(sourceCount.formatted(.number.locale(StoreDisplayFormat.latinLocale))) عنصر من IPA-AR و deb-AR".storeForcedRTL)
+                Text((StoreLanguage.isEnglish ? "Find your favorite apps and games" : "ابحث عن تطبيقاتك وألعابك المفضلة").storeForcedRTL)
                     .font(AppFont.regular(12))
                     .foregroundStyle(.white.opacity(0.72))
                     .multilineTextAlignment(.trailing)
@@ -242,7 +242,7 @@ struct SearchFastView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 28)
             } else {
-                ForEach(Array(results.enumerated()), id: \.element.id) { index, app in
+                ForEach(Array(results.prefix(visibleLimit).enumerated()), id: \.element.id) { index, app in
                     HStack(spacing: 10) {
                         NavigationLink(destination: AppDetailView(app: app)) {
                             HStack(spacing: 12) {
@@ -274,9 +274,20 @@ struct SearchFastView: View {
                      .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
                     .padding(.vertical, 10)
 
-                    if index < results.count - 1 {
+                    if index < min(results.count, visibleLimit) - 1 {
                         Divider().overlay(StoreTheme.surfaceBorder.opacity(0.7))
                     }
+                }
+                if visibleLimit < results.count {
+                    HStack {
+                        ProgressView().tint(StoreTheme.accent)
+                        Text(StoreLanguage.isEnglish ? "More results" : "المزيد من النتائج")
+                            .font(AppFont.medium(12))
+                            .foregroundStyle(StoreTheme.textSecondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .onAppear { visibleLimit = min(results.count, visibleLimit + 24) }
                 }
             }
         }
@@ -331,7 +342,6 @@ struct SearchFastView: View {
 
             index = built.entries
             sourceTags = built.tags
-            sourceCount = catalog.count
             errorText = nil
 
             if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -344,6 +354,7 @@ struct SearchFastView: View {
 
     private func scheduleSearch(_ value: String, immediate: Bool = false) {
         searchTask?.cancel()
+        visibleLimit = 24
 
         let clean = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else {
@@ -366,6 +377,7 @@ struct SearchFastView: View {
 
             guard !Task.isCancelled else { return }
             await MainActor.run {
+                guard FastSearchIndex.normalize(query) == FastSearchIndex.normalize(clean) else { return }
                 results = found
                 searching = false
             }
