@@ -89,6 +89,16 @@ private enum FastSearchIndex {
     }
 }
 
+@MainActor
+private enum FastSearchIndexCache {
+    static var entries: [FastSearchEntry] = []
+    static var tags: [String] = []
+    static var storedAt = Date.distantPast
+    static var isFresh: Bool {
+        !entries.isEmpty && Date().timeIntervalSince(storedAt) < 300
+    }
+}
+
 struct SearchFastView: View {
     @State private var query = ""
     @State private var index: [FastSearchEntry] = []
@@ -331,6 +341,14 @@ struct SearchFastView: View {
 
     @MainActor
     private func loadCatalog(force: Bool) async {
+        if !force && FastSearchIndexCache.isFresh {
+            index = FastSearchIndexCache.entries
+            sourceTags = FastSearchIndexCache.tags
+            errorText = nil
+            loading = false
+            if !query.isEmpty { scheduleSearch(query, immediate: true) }
+            return
+        }
         if index.isEmpty { loading = true }
         defer { loading = false }
 
@@ -342,6 +360,9 @@ struct SearchFastView: View {
 
             index = built.entries
             sourceTags = built.tags
+            FastSearchIndexCache.entries = built.entries
+            FastSearchIndexCache.tags = built.tags
+            FastSearchIndexCache.storedAt = Date()
             errorText = nil
 
             if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

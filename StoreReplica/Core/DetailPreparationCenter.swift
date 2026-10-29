@@ -974,7 +974,8 @@ enum AppCloneEngine {
             source: .updates,
             sourceURL: app.effectiveDownloadURL,
             copyNumber: number,
-            dylibNames: []
+            dylibNames: [],
+            isGameDuplicate: app.isGameAsset
         )
         progress(1, "جاهز للتوقيع والتثبيت")
         return clone

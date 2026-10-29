@@ -43,6 +43,7 @@ private struct SideloadLibraryRecord: Codable {
     let source: SideloadSourceKind
     let sourceURL: String?
     let copyNumber: Int?
+    let isGameDuplicate: Bool?
     let dylibNames: [String]
     let iconFileName: String?
     let createdAt: Date
@@ -58,6 +59,8 @@ struct SideloadLibraryItem: Identifiable, Equatable {
     let iconURL: URL?
     let source: SideloadSourceKind
     let isInjected: Bool
+    let isDuplicate: Bool
+    let isGameDuplicate: Bool?
     let modifiedAt: Date
 
     var id: String { appID }
@@ -567,7 +570,8 @@ enum SideloadLibraryStore {
         source: SideloadSourceKind,
         sourceURL: String?,
         copyNumber: Int?,
-        dylibNames: [String]
+        dylibNames: [String],
+        isGameDuplicate: Bool? = nil
     ) throws {
         var savedIcon: String?
         if let iconData = metadata.iconData, !iconData.isEmpty {
@@ -585,6 +589,7 @@ enum SideloadLibraryStore {
             source: source,
             sourceURL: sourceURL,
             copyNumber: copyNumber,
+            isGameDuplicate: isGameDuplicate,
             dylibNames: dylibNames,
             iconFileName: savedIcon,
             createdAt: Date()
@@ -634,6 +639,8 @@ enum SideloadLibraryStore {
                     iconURL: icon,
                     source: record.source,
                     isInjected: !record.dylibNames.isEmpty,
+                    isDuplicate: record.copyNumber != nil,
+                    isGameDuplicate: record.isGameDuplicate,
                     modifiedAt: modified
                 )
             }
@@ -651,6 +658,8 @@ enum SideloadLibraryStore {
                 iconURL: nil,
                 source: .updates,
                 isInjected: false,
+                isDuplicate: false,
+                isGameDuplicate: nil,
                 modifiedAt: modified
             )
         }

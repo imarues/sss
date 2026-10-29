@@ -5,6 +5,10 @@ import Foundation
 // No fabricated counts or placeholder application cards are displayed.
 @MainActor
 final class IPAHomeCollections: ObservableObject {
+    static let shared = IPAHomeCollections()
+    private var lastRefresh = Date.distantPast
+    private var refreshing = false
+
     @Published var apps: [StoreApp] = []
     @Published var dylibs: [StoreApp] = []
     @Published var loaded = false
@@ -14,6 +18,9 @@ final class IPAHomeCollections: ObservableObject {
     @Published var error: String?
 
     func refresh() async {
+        guard !refreshing, !loaded || Date().timeIntervalSince(lastRefresh) >= 300 else { return }
+        refreshing = true
+        defer { refreshing = false }
         do {
             let source = try await KiraSourceSearchService.shared.homeCollections()
             apps = source.apps
@@ -21,6 +28,7 @@ final class IPAHomeCollections: ObservableObject {
             categories = Self.makeCategories(source.apps)
             recommended = source.apps.filter { $0.featured == true }
             recentlyAdded = Self.makeRecentlyAdded(source.apps)
+            lastRefresh = Date()
             error = nil
         } catch {
             self.error = "تعذر تحميل الفئات من المصدر"
@@ -96,7 +104,7 @@ private enum IPAHomeDate {
 }
 
 struct IPAHomeSections: View {
-    @StateObject private var source = IPAHomeCollections()
+    @ObservedObject private var source = IPAHomeCollections.shared
 
     var body: some View {
         VStack(spacing: 25) {

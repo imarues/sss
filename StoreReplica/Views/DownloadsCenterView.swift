@@ -295,9 +295,11 @@ struct DownloadsCenterView: View {
                 Text("v\(item.version) • \(formatBytes(item.size))")
                     .font(AppFont.regular(10.5))
                     .foregroundStyle(StoreTheme.textSecondary)
-                Text(item.isInjected ? "تم حقن التطبيق" : (item.source == .link ? "عبر رابط" : "من التحديثات"))
+                Text(item.isDuplicate
+                    ? ((item.isGameDuplicate ?? (transfers.trackedApp(id: item.appID)?.isGameAsset ?? false)) ? "لعبة مكررة" : "تطبيق مكرر")
+                    : (item.isInjected ? "تم حقن التطبيق" : (item.source == .link ? "عبر رابط" : "من التحديثات")))
                     .font(AppFont.medium(9.5))
-                    .foregroundStyle(item.isInjected ? StoreTheme.badgeNew : (item.source == .link ? StoreTheme.accent : StoreTheme.badgeUpdated))
+                    .foregroundStyle(item.isDuplicate || item.isInjected ? StoreTheme.badgeNew : (item.source == .link ? StoreTheme.accent : StoreTheme.badgeUpdated))
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
 

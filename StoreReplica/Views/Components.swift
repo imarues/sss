@@ -37,12 +37,13 @@ struct InstallPill: View {
     var app: StoreApp? = nil
     var action: () -> Void = {}
 
-    @ObservedObject private var installer = StoreInstallCoordinator.shared
+    private let installer = StoreInstallCoordinator.shared
+    @State private var observedState = StoreInstallState()
     @State private var installErrorMessage: String?
 
     private var installState: StoreInstallState {
-        guard let app else { return StoreInstallState() }
-        return installer.state(for: app)
+        guard app != nil else { return StoreInstallState() }
+        return observedState
     }
 
     private var displayTitle: String {
@@ -105,6 +106,17 @@ struct InstallPill: View {
         .buttonStyle(.plain)
         .disabled(app != nil && [.downloading, .signing, .installing].contains(installState.phase))
         .opacity(app != nil && installState.phase == .failed ? 0.9 : 1)
+        .onAppear {
+            if let app { observedState = installer.state(for: app) }
+        }
+        .onChange(of: app?.id) { _ in
+            if let app { observedState = installer.state(for: app) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: StoreInstallCoordinator.stateDidChange)) { note in
+            guard let app, note.userInfo?["appID"] as? String == app.id,
+                  let value = note.userInfo?["state"] as? StoreInstallState else { return }
+            if observedState != value { observedState = value }
+        }
         .onChange(of: installState) { newState in
             if let error = newState.errorMessage, !error.isEmpty {
                 installErrorMessage = error

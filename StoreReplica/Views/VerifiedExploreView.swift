@@ -99,6 +99,8 @@ private enum VerifiedExploreCache {
 
 @MainActor
 private final class VerifiedExploreModel: ObservableObject {
+    static let shared = VerifiedExploreModel()
+    private var lastSuccessfulReload = Date.distantPast
     @Published private(set) var sections: [VerifiedExploreSection] = []
     @Published private(set) var ipaCount = 0
     @Published private(set) var checkedCount = 0
@@ -143,16 +145,23 @@ private final class VerifiedExploreModel: ObservableObject {
 
     func reload(force: Bool = false) async {
         guard !loading else { return }
+        if !force, !sections.isEmpty, Date().timeIntervalSince(lastSuccessfulReload) < 300 {
+            return
+        }
         loading = true
         error = nil
         defer { loading = false }
 
         // Show only genuine previously verified records if the connection drops.
         if currentIndex == nil {
-            currentIndex = VerifiedExploreCache.cachedIndex()
+            currentIndex = await Task.detached(priority: .utility) {
+                VerifiedExploreCache.cachedIndex()
+            }.value
         }
         if publishedApps.isEmpty {
-            publishedApps = VerifiedExploreCache.cachedApps() ?? []
+            publishedApps = await Task.detached(priority: .utility) {
+                VerifiedExploreCache.cachedApps()
+            }.value ?? []
         }
         recalculate()
 
@@ -166,11 +175,15 @@ private final class VerifiedExploreModel: ObservableObject {
 
         if let newApps, !newApps.isEmpty {
             publishedApps = newApps.filter { !$0.isDylibAsset }
-            VerifiedExploreCache.storeApps(publishedApps)
+            let appsToPersist = publishedApps
+            Task.detached(priority: .utility) {
+                VerifiedExploreCache.storeApps(appsToPersist)
+            }
         }
         if let newIndex {
             currentIndex = newIndex
         }
+        if newIndex != nil || newApps != nil { lastSuccessfulReload = Date() }
         usedOfflineCache = (newApps == nil || newIndex == nil)
         if currentIndex == nil {
             error = StoreLanguage.isEnglish
@@ -252,7 +265,7 @@ private final class VerifiedExploreModel: ObservableObject {
 }
 
 struct VerifiedExploreView: View {
-    @StateObject private var model = VerifiedExploreModel()
+    @ObservedObject private var model = VerifiedExploreModel.shared
 
     private let columns = [
         GridItem(.flexible(), spacing: 13),

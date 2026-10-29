@@ -32,8 +32,25 @@ extension StoreApp {
     }
 
     var isGameAsset: Bool {
-        let value = normalizedPrimaryCategory
-        return value.contains("العاب") || value == "game" || value == "games" || value.contains("gaming")
+        // Classify every current game category, including genres that do not
+        // contain the English word "game" (Action, Racing and Simulation).
+        let gameTypes: Set<String> = [
+            "action", "racing", "simulation", "arcade", "adventure",
+            "strategy", "sports games", "paid games",
+            "اكشن", "سباق", "سباقات", "محاكاه", "مغامرات", "استراتيجيه"
+        ]
+        let values = categories ?? []
+        return values.contains { raw in
+            let category = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+                .replacingOccurrences(of: "أ", with: "ا")
+                .replacingOccurrences(of: "إ", with: "ا")
+                .replacingOccurrences(of: "آ", with: "ا")
+                .replacingOccurrences(of: "ة", with: "ه")
+            return category.contains("العاب") || category.contains("games") ||
+                category == "game" || category.contains("gaming") ||
+                gameTypes.contains(category)
+        }
     }
 }
 
@@ -251,12 +268,9 @@ struct DirectDownloadButton: View {
     let app: StoreApp
     var compact = false
 
-    @ObservedObject private var transfers = TransferActivityCenter.shared
+    private let transfers = TransferActivityCenter.shared
     @State private var downloaded = false
-
-    private var operation: DirectTransferOperation? {
-        transfers.directOperation(for: app)
-    }
+    @State private var operation: DirectTransferOperation?
 
     var body: some View {
         Button {
@@ -286,7 +300,20 @@ struct DirectDownloadButton: View {
         .buttonStyle(.plain)
         .disabled((operation != nil && operation?.failed == false) || downloaded || app.effectiveDownloadURL == nil)
         .task(id: app.id + (app.version ?? "")) {
+            operation = transfers.directOperation(for: app)
             downloaded = await DirectDownloadLibrary.shared.contains(appID: app.id, version: app.version)
+        }
+        // Only repaint this row if the active operation belongs to this app.
+        .onReceive(transfers.$directOperations) { values in
+            let current = values.values.first {
+                $0.app.id == app.id && ($0.app.version ?? "") == (app.version ?? "")
+            }
+            if operation?.id != current?.id ||
+               operation?.progress != current?.progress ||
+               operation?.failed != current?.failed ||
+               operation?.statusText != current?.statusText {
+                operation = current
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: DirectDownloadLibrary.changedNotification)) { _ in
             Task {

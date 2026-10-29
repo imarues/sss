@@ -73,6 +73,7 @@ final class StoreInstallAppDelegate: NSObject, UIApplicationDelegate {
 
 final class StoreInstallCoordinator: NSObject, ObservableObject {
     static let shared = StoreInstallCoordinator()
+    static let stateDidChange = Notification.Name("TurathInstallStateDidChange")
 
     @Published private(set) var states: [String: StoreInstallState] = [:]
     @Published private(set) var pausedAppIDs: Set<String> = []
@@ -832,7 +833,17 @@ final class StoreInstallCoordinator: NSObject, ObservableObject {
     }
 
     private func publish(appID: String, state: StoreInstallState) {
-        DispatchQueue.main.async { [weak self] in self?.states[appID] = state }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if self.states[appID] != state {
+                self.states[appID] = state
+                NotificationCenter.default.post(
+                    name: Self.stateDidChange,
+                    object: nil,
+                    userInfo: ["appID": appID, "state": state]
+                )
+            }
+        }
     }
 
     private var jobsFile: URL? {
