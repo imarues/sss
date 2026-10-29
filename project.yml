@@ -18,6 +18,9 @@ packages:
   Zip:
     url: https://github.com/marmelroy/Zip.git
     exactVersion: 2.1.2
+  ZIPFoundation:
+    url: https://github.com/weichsel/ZIPFoundation.git
+    exactVersion: 0.9.16
 
 targets:
   TurathLiveActivity:
@@ -58,6 +61,8 @@ targets:
         product: ZsignSwift
       - package: Zip
         product: Zip
+      - package: ZIPFoundation
+        product: ZIPFoundation
       - target: TurathLiveActivity
         embed: true
     settings:
@@ -83,8 +88,7 @@ targets:
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         UIApplicationSupportsIndirectInputEvents: true
         UILaunchScreen: {}
-        UIStatusBarStyle: UIStatusBarStyleLightContent
-        UIViewControllerBasedStatusBarAppearance: false
+        UIViewControllerBasedStatusBarAppearance: true
         NSSupportsLiveActivities: true
         UIBackgroundModes:
           - audio

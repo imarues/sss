@@ -1,6 +1,7 @@
 import Foundation
 import UIKit
 import Zip
+import ZIPFoundation
 import ZsignSwift
 
 // MARK: - Copy variants
@@ -56,6 +57,7 @@ struct SideloadLibraryItem: Identifiable, Equatable {
     let ipaURL: URL
     let iconURL: URL?
     let source: SideloadSourceKind
+    let isInjected: Bool
     let modifiedAt: Date
 
     var id: String { appID }
@@ -333,7 +335,10 @@ enum SideloadPackagePreparer {
                 progress: { value in progress?(0.08 + (value * 0.30), "جاري فك الحزمة") }
             )
         } catch {
-            throw SideloadSigningError.invalidIPA
+            // Independent parser handles ZIP64 and some large IPA archives.
+            try? fm.removeItem(at: root.appendingPathComponent("Payload"))
+            do { try fm.unzipItem(at: sourceIPA, to: root) }
+            catch { throw SideloadSigningError.invalidIPA }
         }
 
         guard let payload = BatSignPackagePipeline.locatePayload(in: root) else {
@@ -628,6 +633,7 @@ enum SideloadLibraryStore {
                     ipaURL: ipa,
                     iconURL: icon,
                     source: record.source,
+                    isInjected: !record.dylibNames.isEmpty,
                     modifiedAt: modified
                 )
             }
@@ -644,6 +650,7 @@ enum SideloadLibraryStore {
                 ipaURL: ipa,
                 iconURL: nil,
                 source: .updates,
+                isInjected: false,
                 modifiedAt: modified
             )
         }

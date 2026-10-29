@@ -86,7 +86,7 @@ struct LiveUpdatesView: View {
             .task { await bootstrap() }
         }
         .navigationViewStyle(.stack)
-        .environment(\.layoutDirection, .rightToLeft)
+         .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
     }
 
     private var selectedAllApps: [StoreApp] { appsByDay[selectedDay] ?? [] }
@@ -136,7 +136,7 @@ struct LiveUpdatesView: View {
                 .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
-        .environment(\.layoutDirection, .rightToLeft)
+         .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
         .padding(.horizontal, StoreTheme.pageHorizontal)
     }
 
@@ -170,7 +170,7 @@ struct LiveUpdatesView: View {
                     .foregroundStyle(StoreTheme.textSecondary)
             }
         }
-        .environment(\.layoutDirection, .rightToLeft)
+         .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
         .padding(15)
         .frame(maxWidth: .infinity, minHeight: 94, alignment: .trailing)
         .storeCard(radius: 19)
@@ -234,7 +234,7 @@ struct LiveUpdatesView: View {
                     .foregroundStyle(StoreTheme.textSecondary)
             }
         }
-        .environment(\.layoutDirection, .rightToLeft)
+         .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
         .padding(.horizontal, StoreTheme.pageHorizontal)
     }
 
@@ -255,7 +255,7 @@ struct LiveUpdatesView: View {
                             InstallPill(app: app)
                         }
                     }
-                    .environment(\.layoutDirection, .rightToLeft)
+                     .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
                     .padding(.vertical, 10)
 
                     if index < visibleApps.count - 1 {
@@ -323,7 +323,7 @@ struct LiveUpdatesView: View {
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        .environment(\.layoutDirection, .rightToLeft)
+         .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
         .frame(maxWidth: .infinity)
     }
 

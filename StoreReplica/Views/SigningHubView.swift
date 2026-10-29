@@ -303,7 +303,7 @@ struct SigningHubView: View {
             }
             .navigationBarTitleDisplayMode(.inline)
         }
-        .preferredColorScheme(.dark)
+        
         .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
         .interactiveDismissDisabled(model.busy)
         .sheet(isPresented: $pickingIPA) {
@@ -917,6 +917,7 @@ struct SigningHubView: View {
 
             remoteIcon(url: item.iconURL, size: 58, gold: true)
         }
+        .environment(\.layoutDirection, StoreLanguage.isEnglish ? .rightToLeft : .leftToRight)
         .padding(13)
         .background(DownloadAssetTheme.goldSoft.opacity(0.72))
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -949,9 +950,9 @@ struct SigningHubView: View {
                 Text("v\(item.version) • \(formatBytes(item.size))")
                     .font(AppFont.regular(10.5))
                     .foregroundStyle(StoreTheme.textSecondary)
-                Text(StoreLanguage.localized(item.source == .link ? "عبر رابط" : "من التحديثات"))
+                Text(StoreLanguage.localized(item.isInjected ? "تم حقن التطبيق" : (item.source == .link ? "عبر رابط" : "من التحديثات")))
                     .font(AppFont.medium(9.5))
-                    .foregroundStyle(item.source == .link ? StoreTheme.accent : StoreTheme.badgeUpdated)
+                    .foregroundStyle(item.isInjected ? StoreTheme.badgeNew : (item.source == .link ? StoreTheme.accent : StoreTheme.badgeUpdated))
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
 
@@ -960,6 +961,7 @@ struct SigningHubView: View {
                 trackedApp: transfers.trackedApp(id: item.appID)
             )
         }
+        .environment(\.layoutDirection, StoreLanguage.isEnglish ? .rightToLeft : .leftToRight)
         .padding(13)
         .background(StoreTheme.surface)
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))

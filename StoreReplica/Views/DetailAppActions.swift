@@ -225,8 +225,8 @@ struct DetailPackageActionSheet: View {
             .background(StoreTheme.background.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
         }
-        .preferredColorScheme(.dark)
-        .environment(\.layoutDirection, .rightToLeft)
+        
+         .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
         .interactiveDismissDisabled(model.busy)
         .sheet(isPresented: $pickingDylib) {
             SigningFilePicker(allowedContentTypes: [.sideloadDylib], allowsMultipleSelection: true) { urls in
@@ -270,7 +270,7 @@ struct DetailPackageActionSheet: View {
                     .padding(14)
                     .background(StoreTheme.field.opacity(0.75))
                     .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
-                    .environment(\.layoutDirection, .leftToRight)
+                     .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
             }
         }
         .padding(16)

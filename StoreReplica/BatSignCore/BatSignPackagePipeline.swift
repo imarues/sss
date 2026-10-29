@@ -1,8 +1,10 @@
 import Foundation
 import Zip
+import ZIPFoundation
 
 enum BatSignPackageError: LocalizedError {
     case unreadablePackage
+    case unreadablePackageDetail(String)
     case payloadNotFound
     case appNotFound
     case invalidMetadata
@@ -11,6 +13,8 @@ enum BatSignPackageError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unreadablePackage: return "تعذر قراءة حزمة IPA."
+        case .unreadablePackageDetail(let reason):
+            return "تعذر فك ملف IPA المحفوظ: \(reason). تحقق من سلامة الأرشيف والمساحة المتوفرة."
         case .payloadNotFound: return "لم يتم العثور على مجلد Payload داخل IPA."
         case .appNotFound: return "لم يتم العثور على تطبيق .app داخل Payload."
         case .invalidMetadata: return "تعذر قراءة Info.plist للتطبيق."
@@ -48,7 +52,15 @@ enum BatSignPackagePipeline {
             Zip.addCustomFileExtension("ipa")
             try Zip.unzipFile(ipaURL, destination: root, overwrite: true, password: nil, progress: { progress?(.unpacking, $0) })
             progress?(.unpacking, 1)
-        } catch { throw BatSignPackageError.unreadablePackage }
+        } catch {
+            try? fm.removeItem(at: root.appendingPathComponent("Payload"))
+            do {
+                try fm.unzipItem(at: ipaURL, to: root)
+                progress?(.unpacking, 1)
+            } catch {
+                throw BatSignPackageError.unreadablePackageDetail(error.localizedDescription)
+            }
+        }
 
         guard let payload = locatePayload(in: root) else { throw BatSignPackageError.payloadNotFound }
         guard let appURL = locateApp(in: payload) else { throw BatSignPackageError.appNotFound }
@@ -118,7 +130,11 @@ enum BatSignPackagePipeline {
             try Zip.unzipFile(url, destination: root, overwrite: true, password: nil, progress: nil)
             guard let payload = locatePayload(in: root), locateApp(in: payload) != nil else { return false }
             return true
-        } catch { return false }
+        } catch {
+            try? fm.removeItem(at: root.appendingPathComponent("Payload"))
+            guard (try? fm.unzipItem(at: url, to: root)) != nil else { return false }
+            return locatePayload(in: root).flatMap { locateApp(in: $0) } != nil
+        }
     }
 
     private static func readMetadata(appURL: URL, fallback job: StoreInstallJob) throws -> (name: String, bundleID: String, version: String) {

@@ -80,8 +80,8 @@ struct AppCloneSheet: View {
             .padding(.horizontal, 18).padding(.top, 8)
         }
         .background(StoreTheme.background.ignoresSafeArea())
-        .preferredColorScheme(.dark)
-        .environment(\.layoutDirection, .rightToLeft)
+        
+         .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
     }
 
     private func startDuplicate() {
@@ -104,7 +104,7 @@ struct AppCloneSheet: View {
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        .environment(\.layoutDirection, .leftToRight)
+         .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
     }
 
     private var intro: some View {
@@ -112,7 +112,7 @@ struct AppCloneSheet: View {
             .font(AppFont.regular(13.5)).foregroundStyle(StoreTheme.textSecondary)
             .multilineTextAlignment(.trailing).lineSpacing(7)
             .frame(maxWidth: .infinity, alignment: .trailing)
-            .environment(\.layoutDirection, .rightToLeft)
+             .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
     }
 
     private var numberCard: some View {
@@ -135,7 +135,7 @@ struct AppCloneSheet: View {
                     .buttonStyle(.plain)
                 }
             }
-            .environment(\.layoutDirection, .rightToLeft)
+             .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
 
             Button {
                 useCustom = true
@@ -176,7 +176,7 @@ struct AppCloneSheet: View {
                 }
                 .font(.system(size: 14, weight: .medium, design: .monospaced))
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .environment(\.layoutDirection, .leftToRight)
+                 .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
             }
 
             HStack(alignment: .top, spacing: 9) {

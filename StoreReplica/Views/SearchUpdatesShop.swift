@@ -338,9 +338,11 @@ struct StoreSettingsView: View {
     @ObservedObject private var certificateVault = SigningCertificateVault.shared
     @AppStorage("store.favoriteIDs") private var favoriteIDs = ""
     @AppStorage("store.language") private var selectedLanguage = "ar"
+    @AppStorage("store.appearance") private var selectedAppearance = "night"
     @State private var showCertificates = false
     @State private var showFavorites = false
     @State private var showLanguagePicker = false
+    @State private var showAppearancePicker = false
 
     var body: some View {
         ZStack {
@@ -360,7 +362,25 @@ struct StoreSettingsView: View {
                     VStack(spacing: 0) {
                         settingRow("عدد التطبيقات", "\((store.catalog.total ?? store.searchMeta.totalApps ?? 0).formatted(.number.locale(StoreDisplayFormat.latinLocale)))", "square.stack.3d.up.fill")
                         Divider().overlay(StoreTheme.surfaceBorder)
-                        settingRow("نمط التصميم", "Night", "moon.stars.fill")
+                        Button { showAppearancePicker = true } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: "chevron.left")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(StoreTheme.textSecondary)
+                                Text(selectedAppearance == "day" ? "Day" : "Night")
+                                    .font(AppFont.medium(13))
+                                    .foregroundStyle(StoreTheme.accent)
+                                Spacer()
+                                Text("نمط التصميم")
+                                    .font(AppFont.medium(13))
+                                    .foregroundStyle(StoreTheme.textPrimary)
+                                Image(systemName: selectedAppearance == "day" ? "sun.max.fill" : "moon.stars.fill")
+                                    .foregroundStyle(StoreTheme.accent)
+                                    .frame(width: 24)
+                            }
+                            .frame(height: 48)
+                        }
+                        .buttonStyle(.plain)
                         Divider().overlay(StoreTheme.surfaceBorder)
                         Button { showLanguagePicker = true } label: {
                             HStack(spacing: 10) {
@@ -395,6 +415,11 @@ struct StoreSettingsView: View {
         .sheet(isPresented: $showFavorites) {
             StoreFavoritesView()
                 .presentationDetents([.large])
+        }
+        .sheet(isPresented: $showAppearancePicker) {
+            appearanceSelection
+                .presentationDetents([.height(240)])
+                .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showLanguagePicker) {
             languageSelection
@@ -457,6 +482,44 @@ struct StoreSettingsView: View {
         .buttonStyle(.plain)
     }
 
+    private var appearanceSelection: some View {
+        NavigationStack {
+            VStack(spacing: 12) {
+                Text("نمط التصميم")
+                    .font(AppFont.black(19))
+                    .foregroundStyle(StoreTheme.textPrimary)
+                    .padding(.bottom, 6)
+                appearanceChoice("ليلي · Night", code: "night", icon: "moon.stars.fill")
+                appearanceChoice("نهاري · Day", code: "day", icon: "sun.max.fill")
+                Spacer(minLength: 0)
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity)
+            .background(StoreTheme.background.ignoresSafeArea())
+        }
+    }
+
+    private func appearanceChoice(_ name: String, code: String, icon: String) -> some View {
+        Button {
+            selectedAppearance = code
+            showAppearancePicker = false
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: icon).foregroundStyle(StoreTheme.accent)
+                Text(name).font(AppFont.bold(15)).foregroundStyle(StoreTheme.textPrimary)
+                Spacer()
+                if selectedAppearance == code {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(StoreTheme.accent)
+                }
+            }
+            .padding(13)
+            .frame(maxWidth: .infinity)
+            .background(StoreTheme.surface, in: RoundedRectangle(cornerRadius: 15))
+        }
+        .buttonStyle(.plain)
+    }
+
     private var languageSelection: some View {
         NavigationStack {
             VStack(spacing: 12) {
@@ -473,9 +536,7 @@ struct StoreSettingsView: View {
             .frame(maxWidth: .infinity)
             .background(StoreTheme.background.ignoresSafeArea())
         }
-        // Explicit LTR for language names fixes iOS' mirrored menu labels.
-        .environment(\.layoutDirection, .leftToRight)
-        .preferredColorScheme(.dark)
+        .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
     }
 
     private func languageChoice(_ name: String, code: String) -> some View {

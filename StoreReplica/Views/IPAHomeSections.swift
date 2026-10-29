@@ -135,14 +135,16 @@ struct IPAHomeSections: View {
 
     private func heading(_ title: String) -> some View {
         HStack {
-            Spacer()
             Text(StoreLanguage.localized(title)).font(AppFont.black(22)).foregroundStyle(StoreTheme.textPrimary)
+            Spacer()
         }.padding(.horizontal, StoreTheme.pageHorizontal)
     }
 
     private func section(_ title: String, apps: [StoreApp], showsBundle: Bool, showsDate: Bool) -> some View {
         VStack(spacing: 13) {
             HStack {
+                Text(StoreLanguage.localized(title)).font(AppFont.black(22)).foregroundStyle(StoreTheme.textPrimary)
+                Spacer()
                 NavigationLink(destination: IPAHomeCollectionList(title: title, apps: apps, showsBundle: showsBundle)) {
                     HStack(spacing: 5) {
                         Image(systemName: "chevron.left").font(.system(size: 10, weight: .bold))
@@ -152,8 +154,6 @@ struct IPAHomeSections: View {
                     .padding(.horizontal, 13).padding(.vertical, 10)
                     .background(StoreTheme.surface, in: Capsule())
                 }
-                Spacer()
-                Text(StoreLanguage.localized(title)).font(AppFont.black(22)).foregroundStyle(StoreTheme.textPrimary)
             }.padding(.horizontal, StoreTheme.pageHorizontal)
             LazyVStack(spacing: 12) {
                 ForEach(Array(apps.prefix(5).enumerated()), id: \.element.id) { index, app in
@@ -172,17 +172,16 @@ private struct IPACategoryTile: View {
         HStack(spacing: 12) {
             RemoteImage(path: category.imageUrl, cornerRadius: 12).frame(width: 49, height: 49)
             VStack(alignment: .trailing, spacing: 6) {
-                Text(StoreLanguage.localized(category.name)).font(AppFont.bold(14)).foregroundStyle(.white).lineLimit(1)
+                Text(StoreLanguage.localized(category.name)).font(AppFont.bold(14)).foregroundStyle(StoreTheme.textPrimary).lineLimit(1)
                 Text(StoreLanguage.isEnglish ? "\(category.count ?? 0) apps" : "\(category.count ?? 0) تطبيق")
-                    .font(AppFont.medium(11)).foregroundStyle(.white.opacity(0.58))
+                    .font(AppFont.medium(11)).foregroundStyle(StoreTheme.textSecondary)
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .padding(13)
         .frame(width: 226, height: 81)
         .background(
-            LinearGradient(colors: [Color(red: 0.11, green: 0.15, blue: 0.26),
-                                    Color(red: 0.09, green: 0.12, blue: 0.21)],
+            LinearGradient(colors: [StoreTheme.field, StoreTheme.surface],
                            startPoint: .topLeading, endPoint: .bottomTrailing),
             in: RoundedRectangle(cornerRadius: 20, style: .continuous)
         )
@@ -236,8 +235,7 @@ private struct IPAGlowAppCard: View {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .fill(LinearGradient(
                     colors: [glow.opacity(0.27),
-                             Color(red: 0.11, green: 0.15, blue: 0.25),
-                             Color(red: 0.075, green: 0.10, blue: 0.18)],
+                             StoreTheme.field, StoreTheme.surface],
                     startPoint: .topLeading, endPoint: .bottomTrailing
                 ))
             // Liquid-looking gradients without blurred offscreen layers.
@@ -252,6 +250,33 @@ private struct IPAGlowAppCard: View {
                 ))
             HStack(spacing: 9) {
                 // Actions are outside the NavigationLink to avoid nested buttons.
+                NavigationLink(destination: AppDetailView(app: app)) {
+                    HStack(spacing: 9) {
+                        AppIconView(app: app, size: 54)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(StoreDisplayFormat.digits(app.name))
+                                .font(AppFont.bold(14)).foregroundStyle(StoreTheme.textPrimary).lineLimit(1)
+                            Text([app.version.map { "v" + StoreDisplayFormat.digits($0) }, sizeText]
+                                    .compactMap { $0 }.joined(separator: " · "))
+                                .font(AppFont.medium(10.5)).foregroundStyle(StoreTheme.textSecondary).lineLimit(1)
+                            if showsBundle, let bundle = app.bundleId, !bundle.isEmpty {
+                                Text(StoreDisplayFormat.digits(bundle))
+                                    .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(StoreTheme.textSecondary.opacity(0.80)).lineLimit(1)
+                            }
+                            if showsDate {
+                                let date = app.updatedAt ?? app.versionUpdatedAt ?? app.addedAt
+                                if let date, !date.isEmpty {
+                                    Text(StoreLanguage.localized("تاريخ التحديث: ") + StoreDisplayFormat.digits(date))
+                                        .font(AppFont.medium(9.5)).foregroundStyle(StoreTheme.textSecondary).lineLimit(1)
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(StoreGlassPressStyle())
                 VStack(spacing: 7) {
                     if app.isDylibAsset {
                         Text(StoreLanguage.localized("عرض"))
@@ -269,44 +294,17 @@ private struct IPAGlowAppCard: View {
                                 Text(StoreLanguage.localized("تكرار"))
                                     .font(AppFont.bold(11))
                             }
-                            .foregroundStyle(.white)
+                            .foregroundStyle(StoreTheme.textPrimary)
                             .frame(maxWidth: .infinity, minHeight: 29)
-                            .background(.white.opacity(0.11), in: Capsule())
+                            .background(StoreTheme.field.opacity(0.85), in: Capsule())
                             .overlay {
-                                Capsule().stroke(.white.opacity(0.22), lineWidth: 0.7)
+                                Capsule().stroke(StoreTheme.surfaceBorder, lineWidth: 0.7)
                             }
                         }
                         .buttonStyle(StoreGlassPressStyle())
                     }
                 }
                 .frame(width: 83)
-                NavigationLink(destination: AppDetailView(app: app)) {
-                    HStack(spacing: 9) {
-                        VStack(alignment: .trailing, spacing: 4) {
-                            Text(StoreDisplayFormat.digits(app.name))
-                                .font(AppFont.bold(14)).foregroundStyle(.white).lineLimit(1)
-                            Text([app.version.map { "v" + StoreDisplayFormat.digits($0) }, sizeText]
-                                    .compactMap { $0 }.joined(separator: " · "))
-                                .font(AppFont.medium(10.5)).foregroundStyle(.white.opacity(0.72)).lineLimit(1)
-                            if showsBundle, let bundle = app.bundleId, !bundle.isEmpty {
-                                Text(StoreDisplayFormat.digits(bundle))
-                                    .font(.system(size: 9.5, weight: .medium, design: .monospaced))
-                                    .foregroundStyle(.white.opacity(0.55)).lineLimit(1)
-                            }
-                            if showsDate {
-                                let date = app.updatedAt ?? app.versionUpdatedAt ?? app.addedAt
-                                if let date, !date.isEmpty {
-                                    Text(StoreLanguage.localized("تاريخ التحديث: ") + StoreDisplayFormat.digits(date))
-                                        .font(AppFont.medium(9.5)).foregroundStyle(.white.opacity(0.58)).lineLimit(1)
-                                }
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .trailing)
-                        AppIconView(app: app, size: 54)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(StoreGlassPressStyle())
             }
             .padding(.horizontal, 11)
             .padding(.vertical, 10)

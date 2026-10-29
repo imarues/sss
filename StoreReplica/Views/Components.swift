@@ -217,7 +217,7 @@ struct SigningSetupSheet: View {
                 }
             }
         }
-        .preferredColorScheme(.dark)
+        
         .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
         .interactiveDismissDisabled(working)
         .sheet(isPresented: $pickingP12) {
@@ -302,11 +302,10 @@ struct SectionTitle: View {
     let title: String
     var body: some View {
         HStack(spacing: 8) {
-            Spacer(minLength: 8)
             Text(StoreLanguage.localized(title).storeForcedRTL)
                 .font(AppFont.black(20))
                 .foregroundStyle(StoreTheme.textPrimary)
-                .multilineTextAlignment(.trailing)
+            Spacer(minLength: 8)
         }
         .padding(.horizontal, StoreTheme.pageHorizontal)
         .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)

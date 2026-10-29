@@ -448,8 +448,8 @@ struct AppDylibMergeSheet: View {
             .padding(.top, 8)
         }
         .background(StoreTheme.background.ignoresSafeArea())
-        .preferredColorScheme(.dark)
-        .environment(\.layoutDirection, .rightToLeft)
+        
+         .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
         .sheet(isPresented: $pickingLocal) {
             SigningFilePicker(allowedContentTypes: [.sideloadDylib], allowsMultipleSelection: true) { urls in
                 pickingLocal = false
@@ -492,7 +492,7 @@ struct AppDylibMergeSheet: View {
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        .environment(\.layoutDirection, .leftToRight)
+         .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
     }
 
     private var intro: some View {
@@ -740,8 +740,8 @@ private struct ReadyDylibPickerSheet: View {
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         }
-        .preferredColorScheme(.dark)
-        .environment(\.layoutDirection, .leftToRight)
+        
+         .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
     }
 }
 
@@ -810,7 +810,7 @@ private struct ZipDylibPickerSheet: View {
             .navigationTitle("محتويات ZIP")
             .navigationBarTitleDisplayMode(.inline)
         }
-        .preferredColorScheme(.dark)
-        .environment(\.layoutDirection, .rightToLeft)
+        
+         .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
     }
 }

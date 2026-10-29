@@ -137,7 +137,7 @@ struct SearchFastView: View {
             }
         }
         .navigationViewStyle(.stack)
-        .environment(\.layoutDirection, .rightToLeft)
+         .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
     }
 
     private var hero: some View {
@@ -156,7 +156,7 @@ struct SearchFastView: View {
                     .multilineTextAlignment(.trailing)
             }
         }
-        .environment(\.layoutDirection, .rightToLeft)
+         .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
         .padding(19)
         .background(
             LinearGradient(
@@ -199,7 +199,7 @@ struct SearchFastView: View {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(StoreTheme.textSecondary)
         }
-        .environment(\.layoutDirection, .rightToLeft)
+         .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
         .padding(.horizontal, 14)
         .frame(height: 50)
         .background(StoreTheme.field)
@@ -271,7 +271,7 @@ struct SearchFastView: View {
                             InstallPill(app: app)
                         }
                     }
-                    .environment(\.layoutDirection, .rightToLeft)
+                     .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
                     .padding(.vertical, 10)
 
                     if index < results.count - 1 {

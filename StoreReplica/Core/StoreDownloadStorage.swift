@@ -224,10 +224,33 @@ enum StoreDownloadStorage {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
         let signature = handle.readData(ofLength: 4)
-        guard signature.count >= 2,
-              signature[signature.startIndex] == 0x50,
-              signature[signature.index(after: signature.startIndex)] == 0x4B else {
+        // A PK header alone does not mean the complete IPA was downloaded.
+        guard signature.count == 4,
+              signature[0] == 0x50, signature[1] == 0x4B,
+              signature[2] == 0x03, signature[3] == 0x04 else {
             throw StoreDownloadStorageError.invalidIPA
+        }
+        let tailCount = Int(min(size, 65_557))
+        try handle.seek(toOffset: UInt64(size - Int64(tailCount)))
+        let tail = Array(try handle.read(upToCount: tailCount) ?? Data())
+        guard tail.count >= 22 else { throw StoreDownloadStorageError.truncatedFile }
+        // End-of-central-directory, allowing a ZIP comment up to 65535 bytes.
+        let marker = stride(from: tail.count - 22, through: 0, by: -1).first { i in
+            tail[i] == 0x50 && tail[i + 1] == 0x4B &&
+            tail[i + 2] == 0x05 && tail[i + 3] == 0x06 &&
+            i + 22 + Int(tail[i + 20]) + (Int(tail[i + 21]) << 8) <= tail.count
+        }
+        guard let i = marker else { throw StoreDownloadStorageError.truncatedFile }
+        func u32(_ j: Int) -> Int64 {
+            Int64(tail[j]) | (Int64(tail[j+1]) << 8) |
+            (Int64(tail[j+2]) << 16) | (Int64(tail[j+3]) << 24)
+        }
+        let centralSize = u32(i + 12), centralOffset = u32(i + 16)
+        // These sentinel values mean ZIP64, whose sizes are in an extension.
+        if centralSize != 0xFFFF_FFFF && centralOffset != 0xFFFF_FFFF {
+            guard centralOffset <= size, centralSize <= size - centralOffset else {
+                throw StoreDownloadStorageError.truncatedFile
+            }
         }
     }
 

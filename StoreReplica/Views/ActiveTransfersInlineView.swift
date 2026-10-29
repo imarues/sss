@@ -64,7 +64,7 @@ struct ActiveTransfersInlineView: View {
                     )
                 }
             }
-            .environment(\.layoutDirection, .rightToLeft)
+             .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
         }
     }
 
@@ -98,7 +98,7 @@ struct ActiveTransfersInlineView: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.72)
                         .frame(maxWidth: .infinity, alignment: .trailing)
-                        .environment(\.layoutDirection, .leftToRight)
+                         .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
 
                     HStack(spacing: 7) {
                         Text("الإصدار \(version)")
@@ -123,7 +123,7 @@ struct ActiveTransfersInlineView: View {
                     .font(AppFont.black(19))
                     .foregroundStyle(accent)
                     .frame(minWidth: 52, alignment: .leading)
-                    .environment(\.layoutDirection, .leftToRight)
+                     .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
             }
 
             GeometryReader { proxy in
@@ -134,7 +134,7 @@ struct ActiveTransfersInlineView: View {
                 }
             }
             .frame(height: 8)
-            .environment(\.layoutDirection, .leftToRight)
+             .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
         }
         .padding(13)
         .background(StoreTheme.surface)

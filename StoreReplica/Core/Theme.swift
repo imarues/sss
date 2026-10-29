@@ -3,18 +3,30 @@ import UIKit
 import Foundation
 import CoreText
 struct StoreTheme {
-    static let accent = Color(hex: "#7AA2FF")
-    static let onAccent = Color(hex: "#0B1020")
-    static let background = Color(hex: "#0B1020")
-    static let surface = Color(hex: "#151B2E")
-    static let surfaceBorder = Color(hex: "#262F4A")
-    static let sheet = Color(hex: "#11172A")
-    static let field = Color(hex: "#1C2340")
-    static let textPrimary = Color(hex: "#F2F4FA")
-    static let textSecondary = Color(hex: "#9AA3BC")
-    static let badgeNew = Color(hex: "#34D399")
-    static let badgeUpdated = Color(hex: "#FBBF24")
-    static let tabInactive = Color(hex: "#7B84A1")
+    private static func adaptive(dark: String, light: String) -> Color {
+        func uiColor(_ hex: String) -> UIColor {
+            let rgb = UInt64(hex.replacingOccurrences(of: "#", with: ""), radix: 16) ?? 0
+            return UIColor(red: CGFloat((rgb >> 16) & 255) / 255,
+                           green: CGFloat((rgb >> 8) & 255) / 255,
+                           blue: CGFloat(rgb & 255) / 255, alpha: 1)
+        }
+        return Color(uiColor: UIColor { trait in
+            uiColor(trait.userInterfaceStyle == .light ? light : dark)
+        })
+    }
+    // Keep Night identical to the previous palette; Day uses the same brand.
+    static let accent = adaptive(dark: "#7AA2FF", light: "#426DE0")
+    static let onAccent = adaptive(dark: "#0B1020", light: "#FFFFFF")
+    static let background = adaptive(dark: "#0B1020", light: "#F7F9FF")
+    static let surface = adaptive(dark: "#151B2E", light: "#FFFFFF")
+    static let surfaceBorder = adaptive(dark: "#262F4A", light: "#D6E0F0")
+    static let sheet = adaptive(dark: "#11172A", light: "#EFF3FC")
+    static let field = adaptive(dark: "#1C2340", light: "#EDF2FD")
+    static let textPrimary = adaptive(dark: "#F2F4FA", light: "#17223A")
+    static let textSecondary = adaptive(dark: "#9AA3BC", light: "#5E6D88")
+    static let badgeNew = adaptive(dark: "#34D399", light: "#128D66")
+    static let badgeUpdated = adaptive(dark: "#FBBF24", light: "#9D6800")
+    static let tabInactive = adaptive(dark: "#7B84A1", light: "#6A7591")
     static let splashBlue = Color(hex: "#011D57")
 
     static let pageHorizontal: CGFloat = 16

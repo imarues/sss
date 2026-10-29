@@ -406,7 +406,7 @@ private struct VerifiedGlassCategoryCard: View {
                     LinearGradient(
                         colors: [
                             tint.opacity(0.30),
-                            Color(red: 0.115, green: 0.16, blue: 0.27).opacity(0.93),
+                            StoreTheme.field.opacity(0.93),
                             StoreTheme.surface.opacity(0.94)
                         ],
                         startPoint: .topLeading,
@@ -428,7 +428,7 @@ private struct VerifiedGlassCategoryCard: View {
                 HStack(spacing: 8) {
                     Image(systemName: StoreLanguage.isEnglish ? "chevron.right" : "chevron.left")
                         .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.58))
+                        .foregroundStyle(StoreTheme.textSecondary)
                     Spacer()
                     if let picture {
                         AppIconView(app: picture, size: 60)
@@ -436,7 +436,7 @@ private struct VerifiedGlassCategoryCard: View {
                     } else {
                         Image(systemName: section.category.symbol)
                             .font(.system(size: 27, weight: .semibold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(StoreTheme.textPrimary)
                             .frame(width: 60, height: 60)
                             .background(tint.opacity(0.42), in: RoundedRectangle(cornerRadius: 17))
                             .overlay(RoundedRectangle(cornerRadius: 17).stroke(.white.opacity(0.16)))
@@ -445,7 +445,7 @@ private struct VerifiedGlassCategoryCard: View {
                 Spacer(minLength: 12)
                 Text(section.category.localizedName)
                     .font(AppFont.black(15))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(StoreTheme.textPrimary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.77)
                     .frame(maxWidth: .infinity, alignment: .trailing)
@@ -453,7 +453,7 @@ private struct VerifiedGlassCategoryCard: View {
                      ? "\(section.apps.count) apps"
                      : "\(section.apps.count) تطبيق")
                     .font(AppFont.medium(11))
-                    .foregroundStyle(.white.opacity(0.72))
+                    .foregroundStyle(StoreTheme.textSecondary)
                     .padding(.top, 6)
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }

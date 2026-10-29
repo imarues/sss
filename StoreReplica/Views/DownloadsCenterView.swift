@@ -47,8 +47,8 @@ struct DownloadsCenterView: View {
             }
             .navigationBarTitleDisplayMode(.inline)
         }
-        .preferredColorScheme(.dark)
-        .environment(\.layoutDirection, .rightToLeft)
+        
+         .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
         .onAppear {
             TransferActivityCenter.shared.bootstrap()
             refreshLibrary()
@@ -190,7 +190,7 @@ struct DownloadsCenterView: View {
             RoundedRectangle(cornerRadius: 19, style: .continuous)
                 .stroke(accent.opacity(0.42), lineWidth: 0.9)
         }
-        .environment(\.layoutDirection, .rightToLeft)
+         .environment(\.layoutDirection, StoreLanguage.isEnglish ? .leftToRight : .rightToLeft)
     }
 
     private var completedSection: some View {
@@ -292,9 +292,9 @@ struct DownloadsCenterView: View {
                 Text("v\(item.version) • \(formatBytes(item.size))")
                     .font(AppFont.regular(10.5))
                     .foregroundStyle(StoreTheme.textSecondary)
-                Text(item.source == .link ? "عبر رابط" : "من التحديثات")
+                Text(item.isInjected ? "تم حقن التطبيق" : (item.source == .link ? "عبر رابط" : "من التحديثات"))
                     .font(AppFont.medium(9.5))
-                    .foregroundStyle(item.source == .link ? StoreTheme.accent : StoreTheme.badgeUpdated)
+                    .foregroundStyle(item.isInjected ? StoreTheme.badgeNew : (item.source == .link ? StoreTheme.accent : StoreTheme.badgeUpdated))
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
 

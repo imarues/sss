@@ -86,7 +86,7 @@ struct SigningCertificateManagerView: View {
                 ToolbarItem(placement: .topBarLeading) { Button("إغلاق") { dismiss() } }
             }
         }
-        .preferredColorScheme(.dark)
+        
         .task { await vault.refresh() }
         .sheet(isPresented: $showP12Picker) {
             SigningFilePicker(allowedContentTypes: [.signingP12]) { urls in

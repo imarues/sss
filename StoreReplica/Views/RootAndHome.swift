@@ -178,6 +178,18 @@ struct StoreHeader: View {
 
     var body: some View {
         HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(StoreLanguage.localized(store.config.storeName ?? "التراث بلس"))
+                    .font(AppFont.black(18))
+                    .foregroundStyle(StoreTheme.textPrimary)
+                Text(StoreLanguage.localized(store.config.tagline ?? "متجر التطبيقات"))
+                    .font(AppFont.regular(10.5))
+                    .foregroundStyle(StoreTheme.textSecondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
             HStack(spacing: 9) {
                 Button { showSettings = true } label: {
                     ZStack {
@@ -219,18 +231,6 @@ struct StoreHeader: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(activeTransferCount > 0 ? "التنزيلات، \(activeTransferCount) عمليات جارية" : "التنزيلات")
-            }
-
-            Spacer()
-
-            VStack(alignment: .trailing, spacing: 1) {
-                Text(StoreLanguage.localized(store.config.storeName ?? "التراث بلس"))
-                    .font(AppFont.black(18))
-                    .foregroundStyle(StoreTheme.textPrimary)
-                Text(StoreLanguage.localized(store.config.tagline ?? "متجر التطبيقات"))
-                    .font(AppFont.regular(10.5))
-                    .foregroundStyle(StoreTheme.textSecondary)
-                    .lineLimit(1)
             }
         }
         .frame(height: 56)
